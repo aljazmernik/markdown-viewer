@@ -1,0 +1,11 @@
+/* Markdown Viewer theme | name: Sepia | base: light */
+:root {
+  --bg: #f4ecd8; --fg: #3d2f1f; --muted: #7a6650; --bar: #ece2c8; --strip: #e1d4b4;
+  --border: #d4c39b; --code-bg: #ebdfc2; --link: #8a4b0f; --accent: #9c4f22; --on-accent: #ffffff;
+  --warn-bg: #f3dfa6; --warn-fg: #3d2f1f;
+}
+.hljs-keyword, .hljs-built_in, .hljs-selector-tag { color: #9c4f22; }
+.hljs-string, .hljs-attr { color: #5d7a2c; }
+.hljs-comment, .hljs-quote { color: #9a8566; font-style: italic; }
+.hljs-number, .hljs-literal { color: #8a3f8f; }
+.hljs-title, .hljs-section { color: #2d5d8a; }

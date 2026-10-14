@@ -1,0 +1,12 @@
+/* Markdown Viewer theme | name: Solarized Dark | base: dark */
+:root {
+  --bg: #002b36; --fg: #93a1a1; --muted: #657b83; --bar: #073642; --strip: #00212b;
+  --border: #0e4a57; --code-bg: #073642; --link: #268bd2; --accent: #268bd2; --on-accent: #fdf6e3;
+  --warn-bg: #3d3a14; --warn-fg: #eee8d5;
+}
+.hljs-keyword, .hljs-selector-tag { color: #859900; }
+.hljs-string, .hljs-attr { color: #2aa198; }
+.hljs-comment, .hljs-quote { color: #586e75; font-style: italic; }
+.hljs-number, .hljs-literal { color: #d33682; }
+.hljs-title, .hljs-section, .hljs-built_in { color: #268bd2; }
+.hljs-type, .hljs-variable { color: #b58900; }

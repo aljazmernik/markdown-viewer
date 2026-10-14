@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>MarkdownViewer</AssemblyName>
     <!-- bumped by tools/release.ps1 -->
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <Product>Markdown Viewer</Product>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <RootNamespace>MarkdownViewer</RootNamespace>
@@ -30,6 +30,13 @@
     <DebugType>none</DebugType>
     <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
+  <!-- The test project lives in tests/ and is built separately. -->
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+    <None Remove="tests/**" />
+    <InternalsVisibleTo Include="MarkdownViewer.Tests" />
+  </ItemGroup>
+
   <!-- Page assets and third-party libraries are embedded and served from https://md.local/__res/ -->
   <ItemGroup>
     <EmbeddedResource Include="web\**\*" LogicalName="web/%(RecursiveDir)%(Filename)%(Extension)" />

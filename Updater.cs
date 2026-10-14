@@ -56,8 +56,13 @@ static class Updater
         using var response = await Http.GetAsync(FeedUrl);
         if (response.StatusCode == HttpStatusCode.NotFound) return null; // no releases yet
         response.EnsureSuccessStatusCode();
+        return ParseRelease(await response.Content.ReadAsStringAsync());
+    }
 
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    /// <summary>Reads a GitHub "release" API response; null if its tag isn't a version.</summary>
+    internal static UpdateInfo? ParseRelease(string releaseJson)
+    {
+        using var json = JsonDocument.Parse(releaseJson);
         var root = json.RootElement;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
         if (!Version.TryParse(tag.TrimStart('v', 'V'), out var version)) return null;
@@ -113,9 +118,15 @@ static class Updater
 
     static async Task<string> GetPublishedChecksumAsync(string url)
     {
-        var text = await Http.GetStringAsync(url); // "<hex>  <file name>"
+        return ParseChecksum(await Http.GetStringAsync(url));
+    }
+
+    /// <summary>The hash from a checksum file ("&lt;hex&gt;  &lt;file name&gt;", sha256sum format).</summary>
+    internal static string ParseChecksum(string text)
+    {
         var hex = text.Trim().Split(' ', '\t')[0];
-        if (hex.Length != 64) throw new InvalidDataException("The release's checksum file is not valid.");
+        if (hex.Length != 64 || !hex.All(Uri.IsHexDigit))
+            throw new InvalidDataException("The release's checksum file is not valid.");
         return hex;
     }
 

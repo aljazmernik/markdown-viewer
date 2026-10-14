@@ -86,6 +86,7 @@
   }
 
   const requestClose = id => post({ type: 'closeTab', doc: id });
+  const exportDoc = format => { if (active !== null) post({ type: 'export', format, doc: active }); };
 
   // ---------- popup menus (tab right-click, open/recent) ----------
   let menu = null;
@@ -164,6 +165,10 @@
     showMenu([
       { label: 'New file', key: 'Ctrl+N', action: () => post({ type: 'new' }) },
       { label: 'Open file…', key: 'Ctrl+O', action: () => post({ type: 'open' }) },
+      '-',
+      { label: 'Export as PDF…', disabled: active === null, action: () => exportDoc('pdf') },
+      { label: 'Export as HTML…', disabled: active === null, action: () => exportDoc('html') },
+      { label: 'Print…', key: 'Ctrl+P', disabled: active === null, action: () => exportDoc('print') },
       ...(recent.length ? ['-'] : []),
       ...recent.map(p => ({ label: fileName(p), sub: dirName(p), title: p, action: () => post({ type: 'openPath', path: p }) })),
       ...(recent.length ? ['-', { label: 'Clear recent files', action: () => post({ type: 'clearRecent' }) }] : []),
@@ -204,9 +209,11 @@
   function handleKey(e, fromDoc) {
     const k = e.key.toLowerCase(), ctrl = e.ctrlKey && !e.altKey;
     if (k === 'escape' && menu) closeMenu();
+    else if (k === 'escape' && !panel.hidden) toggleSettings(false);
     else if (ctrl && k === 'tab') cycle(e.shiftKey ? -1 : 1);
     else if (ctrl && e.shiftKey && k === 't') post({ type: 'reopenClosed' });
     else if (ctrl && !e.shiftKey && k === 'n') post({ type: 'new' });
+    else if (ctrl && !e.shiftKey && k === 'p') exportDoc('print');
     else if (ctrl && k === 'pagedown') cycle(1);
     else if (ctrl && k === 'pageup') cycle(-1);
     else if (ctrl && !e.shiftKey && k === 'o') post({ type: 'open' });
@@ -237,29 +244,150 @@
   addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
   addEventListener('drop', e => { if (e.dataTransfer.files.length) { e.preventDefault(); post({ type: 'drop' }, e.dataTransfer.files); } });
 
-  // Theme: System (follow Windows) -> Light -> Dark. The app applies it to every tab.
-  const THEMES = {
-    system: { next: 'light', label: 'Theme: System (follows Windows)',
-      svg: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/>' },
-    light: { next: 'dark', label: 'Theme: Light',
-      svg: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>' },
-    dark: { next: 'system', label: 'Theme: Dark',
-      svg: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>' },
-  };
-  function showTheme(name) {
-    const t = THEMES[name] ?? THEMES.system;
-    document.body.dataset.theme = name;
-    $('theme').title = `${t.label} — click to change`;
-    $('theme').setAttribute('aria-label', t.label);
-    $('theme').innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${t.svg}</svg>`;
-  }
-  $('theme').addEventListener('click', () => {
-    const next = (THEMES[document.body.dataset.theme] ?? THEMES.system).next;
-    showTheme(next);
-    post({ type: 'theme', value: next });
-  });
-  showTheme(document.body.dataset.theme);
+  // ---------- appearance: theme, text and background ----------
+  const panel = $('settings');
+  let look = null;          // last state from the app
+  let themesKey = '';       // to rebuild the theme cards only when the list changes
 
+  // Loads /__theme.css?v=<version> and, once it's in, removes all older copies, so quick
+  // successive changes can't leave a stale sheet behind (the newest is always last).
+  function reloadThemeCss(doc, version, done) {
+    const sheets = () => [...doc.querySelectorAll('link[data-theme-css]')];
+    if (sheets().some(l => +l.dataset.v >= version)) return;
+    const link = doc.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = `/__theme.css?v=${version}`;
+    link.dataset.themeCss = '';
+    link.dataset.v = version;
+    link.onload = link.onerror = () => { sheets().forEach(l => { if (+l.dataset.v < version) l.remove(); }); done?.(); };
+    doc.head.append(link);
+  }
+  window.reloadThemeCss = reloadThemeCss;
+  const seg = (key, options) =>
+    `<div class="seg" data-key="${key}">${options.map(([v, label]) => `<button data-v="${v}">${label}</button>`).join('')}</div>`;
+
+  function buildPanel() {
+    panel.innerHTML = `
+      <header><h2>Appearance</h2><button class="x" id="set-close" title="Close (Esc)">\u00d7</button></header>
+      <section>
+        <h3>Theme</h3>
+        <div id="theme-grid" role="radiogroup" aria-label="Theme"></div>
+        <div class="buttons">
+          <button id="theme-create" title="Copy the current theme into a file you can edit">New theme from current</button>
+          <button id="theme-folder">Open themes folder</button>
+        </div>
+      </section>
+      <section>
+        <h3>Text</h3>
+        <div class="row"><span>Font</span>${seg('font', [['sans', 'Sans'], ['serif', 'Serif']])}</div>
+        <div class="row"><span>Size</span><input type="range" id="fontSize" min="12" max="26" step="1"><output id="fontSize-out"></output></div>
+        <div class="row"><span>Width</span>${seg('width', [['narrow', 'Narrow'], ['normal', 'Normal'], ['wide', 'Wide'], ['full', 'Full']])}</div>
+      </section>
+      <section>
+        <h3>Background</h3>
+        <div id="bg-thumb"></div>
+        <div class="buttons">
+          <button id="bg-choose">Choose image\u2026</button>
+          <button id="bg-remove">Remove</button>
+        </div>
+        <div id="bg-options">
+          <div class="row"><span>Fit</span>${seg('backgroundFit', [['cover', 'Fill'], ['contain', 'Fit'], ['tile', 'Tile']])}</div>
+          <div class="row"><span>Visibility</span><input type="range" id="backgroundOpacity" min="5" max="100" step="5"><output id="backgroundOpacity-out"></output></div>
+          <div class="row"><span>Blur</span><input type="range" id="backgroundBlur" min="0" max="30" step="1"><output id="backgroundBlur-out"></output></div>
+          <label class="row check"><input type="checkbox" id="paper"><span>Paper behind text</span></label>
+        </div>
+      </section>
+      <footer><button id="appearance-reset">Reset text and background</button></footer>`;
+
+    $('set-close').addEventListener('click', () => toggleSettings(false));
+    $('theme-create').addEventListener('click', () => post({ type: 'themeCreate' }));
+    $('theme-folder').addEventListener('click', () => post({ type: 'themesFolder' }));
+    $('bg-choose').addEventListener('click', () => post({ type: 'bgChoose' }));
+    $('bg-remove').addEventListener('click', () => post({ type: 'bgRemove' }));
+    $('appearance-reset').addEventListener('click', () => post({ type: 'appearanceReset' }));
+    panel.querySelectorAll('.seg').forEach(s => s.addEventListener('click', e => {
+      const b = e.target.closest('button');
+      if (b) post({ type: 'appearance', [s.dataset.key]: b.dataset.v });
+    }));
+    // Sliders: show the value while dragging, apply at most every 120 ms.
+    for (const id of ['fontSize', 'backgroundOpacity', 'backgroundBlur']) {
+      let timer = 0;
+      $(id).addEventListener('input', () => {
+        showSliderValue(id);
+        clearTimeout(timer);
+        timer = setTimeout(() => post({ type: 'appearance', [id]: +$(id).value }), 120);
+      });
+    }
+    $('paper').addEventListener('change', () => post({ type: 'appearance', paper: $('paper').checked }));
+  }
+
+  const units = { fontSize: ' px', backgroundOpacity: '%', backgroundBlur: ' px' };
+  const showSliderValue = id => { $(id + '-out').textContent = $(id).value + units[id]; };
+
+  function renderThemes(themes) {
+    const key = JSON.stringify(themes);
+    if (key === themesKey) return;
+    themesKey = key;
+    $('theme-grid').replaceChildren(...themes.map(t => {
+      const card = document.createElement('button');
+      card.className = 'theme-card';
+      card.dataset.id = t.id;
+      card.setAttribute('role', 'radio');
+      card.title = t.id === 'system' ? 'Light or dark, following Windows' : `${t.name} (${t.dark ? 'dark' : 'light'})`;
+      const s = t.swatch;
+      card.innerHTML = `
+        <span class="tc-preview" style="background:${s.bg};border-color:${s.border}">
+          <span class="tc-bar" style="background:${s.bar}"></span>
+          <span class="tc-text" style="color:${s.fg}">Aa</span>
+          <span class="tc-dot" style="background:${s.accent}"></span>
+        </span>
+        <span class="tc-name"></span>`;
+      card.querySelector('.tc-name').textContent = t.name;
+      if (t.custom) {
+        const edit = document.createElement('span');
+        edit.className = 'tc-edit';
+        edit.title = 'Edit this theme';
+        edit.textContent = 'Edit';
+        edit.addEventListener('click', e => { e.stopPropagation(); post({ type: 'themeEdit', id: t.id }); });
+        card.append(edit);
+      }
+      card.addEventListener('click', () => post({ type: 'appearance', theme: t.id }));
+      return card;
+    }));
+  }
+
+  function applyAppearance(state) {
+    look = state;
+    reloadThemeCss(document, state.version);
+    for (const { frame } of tabs.values()) frame.contentWindow.__setTheme?.(state.version);
+
+    if (!panel.firstChild) buildPanel();
+    renderThemes(state.themes);
+    panel.querySelectorAll('.theme-card').forEach(c => {
+      c.classList.toggle('on', c.dataset.id === state.theme);
+      c.setAttribute('aria-checked', c.dataset.id === state.theme);
+    });
+    panel.querySelectorAll('.seg').forEach(s => s.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('on', b.dataset.v === String(state[s.dataset.key]))));
+    for (const id of ['fontSize', 'backgroundOpacity', 'backgroundBlur']) {
+      if (document.activeElement !== $(id)) $(id).value = state[id]; // don't fight a slider being dragged
+      showSliderValue(id);
+    }
+    $('paper').checked = state.paper;
+    const bg = state.background;
+    $('bg-thumb').innerHTML = bg ? '' : '<span>No background</span>';
+    $('bg-thumb').style.backgroundImage = bg ? `url("${bg.url}")` : '';
+    $('bg-thumb').title = bg ? bg.name : '';
+    $('bg-remove').disabled = !bg;
+    $('bg-options').classList.toggle('disabled', !bg);
+    $('bg-options').querySelectorAll('input, button').forEach(el => { el.disabled = !bg; });
+  }
+
+  function toggleSettings(show = panel.hidden) {
+    panel.hidden = !show;
+    $('appearance-btn').classList.toggle('on', show);
+  }
+  $('appearance-btn').addEventListener('click', () => toggleSettings());
   $('new').addEventListener('click', () => post({ type: 'new' }));
   $('open-menu').addEventListener('click', () => menu ? closeMenu() : openMenu());
   $('new-empty').addEventListener('click', () => post({ type: 'new' }));
@@ -277,6 +405,8 @@
     renameTab(id, name, path) { const t = tabs.get(id); if (t) setTabName(t.tab, name, path); },
     setRecent,
     showUpdate,
+    applyAppearance,
+    themeVersion: () => look?.version,
     updateStatus,
     toast,
     reload: id => tabs.get(id)?.frame.contentWindow.location.reload(),

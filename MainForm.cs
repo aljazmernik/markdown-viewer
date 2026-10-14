@@ -2,14 +2,13 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using Markdig;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Win32;
 
 namespace MarkdownViewer;
 
-public sealed class MainForm : Form
+public sealed partial class MainForm : Form
 {
     // Everything is served from a virtual host:
     //   /__shell__.html      the window: tab bar plus one iframe per open file
@@ -20,11 +19,6 @@ public sealed class MainForm : Form
     const string ShellPath = "/__shell__.html";
     const string DocPath = "/__doc__.html";
     const string ResPrefix = "/__res/";
-
-    static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
-        .UseAdvancedExtensions()
-        .UseEmojiAndSmiley()
-        .Build();
 
     static readonly string[] MarkdownExtensions = [".md", ".markdown", ".mdown", ".mkd", ".mkdn", ".mdx"];
 
@@ -50,7 +44,11 @@ public sealed class MainForm : Form
     CoreWebView2Environment? _env;
     readonly List<string> _startupPaths = [];
     string? _startupActive;
-    string _theme = "system";   // "system" (follow Windows), "light" or "dark"
+    AppearanceSettings _look = new();           // theme, text and background (Appearance panel)
+    List<Theme> _themes = Appearance.LoadThemes();
+    int _themeVersion = 1;                      // bumped on every change so pages reload /__theme.css
+    FileSystemWatcher? _themeWatcher;           // the user's themes folder, for live editing
+    readonly System.Windows.Forms.Timer _themeDebounce = new() { Interval = 200 };
     List<string> _recent = [];  // most recent first
     DateTime? _lastUpdateCheck; // UTC
     string? _skipVersion;       // release tag the user chose to skip
@@ -70,7 +68,12 @@ public sealed class MainForm : Form
 
         var settings = LoadSettings();
         if (settings != null) RestorePlacement(settings);
-        if (settings?.Theme is "light" or "dark") _theme = settings.Theme;
+        _look = (settings?.Appearance ?? new AppearanceSettings
+        {
+            Theme = settings?.Theme is "light" or "dark" ? settings.Theme : "system", // settings from 1.3 and older
+        }).Normalized();
+        if (_themes.All(t => t.Id != _look.Theme)) _look.Theme = "system";
+        WatchThemesFolder();
         if (settings?.Recent is { } recent) _recent = [.. recent.Take(MaxRecent)];
         _lastUpdateCheck = settings?.LastUpdateCheck;
         _skipVersion = settings?.SkipVersion;
@@ -370,6 +373,7 @@ public sealed class MainForm : Form
                             ?? _docs.Values.LastOrDefault();
                 if (first != null) await Shell($"shell.activate({first.Id})");
                 PushRecent();
+                PushAppearance();
                 ScheduleUpdateCheck();
                 break;
             case "open":
@@ -417,12 +421,40 @@ public sealed class MainForm : Form
             case "reveal" when doc?.Path != null:
                 ShellOpenWithArgs("explorer.exe", $"/select,\"{doc.Path}\"");
                 break;
+            case "export" when doc != null && Str("format") is "pdf" or "html" or "print":
+                await ExportAsync(doc, Str("format")!);
+                break;
             case "saveAs" when doc != null:
                 await SaveDocAsync(doc, Str("md") ?? "", saveAs: true);
                 break;
-            case "theme" when Str("value") is "system" or "light" or "dark":
-                _theme = Str("value")!;
-                ApplyTheme();
+            case "appearance":
+                UpdateAppearance(root);
+                break;
+            case "appearanceReset":
+                _look = new AppearanceSettings { Theme = _look.Theme };
+                AppearanceChanged();
+                break;
+            case "bgChoose":
+                ChooseBackground();
+                break;
+            case "bgRemove":
+                RemoveBackgroundFile();
+                _look.Background = null;
+                AppearanceChanged();
+                break;
+            case "themeCreate":
+                var created = Appearance.CreateCustomTheme(CurrentTheme, WindowsIsDark);
+                _themes = Appearance.LoadThemes();
+                _look.Theme = "custom:" + Path.GetFileName(created);
+                AppearanceChanged();
+                OpenInEditor(created);
+                break;
+            case "themeEdit" when _themes.FirstOrDefault(t => t.Id == Str("id"))?.FilePath is { } themeFile:
+                OpenInEditor(themeFile);
+                break;
+            case "themesFolder":
+                Directory.CreateDirectory(Appearance.ThemesDir);
+                ShellOpen(Appearance.ThemesDir);
                 break;
             case "drop":
                 OpenFiles(e.AdditionalObjects.OfType<CoreWebView2File>().Select(f => f.Path).Where(IsMarkdown));
@@ -510,6 +542,17 @@ public sealed class MainForm : Form
         var uri = new Uri(e.Request.Uri);
         var path = uri.AbsolutePath;
 
+        if (path == ExportPath && _exportDoc != null)
+        {
+            e.Response = Html(BuildExportPage());
+            return;
+        }
+        if (path == "/__theme.css")
+        {
+            var css = Appearance.BuildCss(CurrentTheme, _look);
+            e.Response = Respond(new MemoryStream(Encoding.UTF8.GetBytes(css)), "text/css; charset=utf-8", cache: false);
+            return;
+        }
         if (path == ShellPath)
         {
             e.Response = Html(BuildShell());
@@ -564,7 +607,7 @@ public sealed class MainForm : Form
 
     // ---------- pages ----------
 
-    static string Render(string markdown) => Markdown.ToHtml(markdown, Pipeline);
+    static string Render(string markdown) => MarkdownRenderer.Render(markdown);
 
     static string Csp(string scripts) =>
         $"""<meta http-equiv="Content-Security-Policy" content="default-src {Host} data: blob:; img-src * data: blob:; media-src * data: blob:; style-src {Host} 'unsafe-inline'; script-src {scripts}; object-src 'none'">""";
@@ -578,8 +621,9 @@ public sealed class MainForm : Form
         <meta name="color-scheme" content="light dark">
         <title>Markdown Viewer</title>
         <link rel="stylesheet" href="{{ResPrefix}}web/app.css">
+        <link rel="stylesheet" href="/__theme.css?v={{_themeVersion}}" data-theme-css data-v="{{_themeVersion}}">
         </head>
-        <body class="shell" data-theme="{{_theme}}" data-version="{{Version}}">
+        <body class="shell" data-version="{{Version}}">
         <nav id="tabs">
           <div id="tablist" role="tablist"></div>
           <button id="new" class="tool" title="New file (Ctrl+N)">+</button>
@@ -588,8 +632,11 @@ public sealed class MainForm : Form
             <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
           </button>
           <span class="spacer"></span>
-          <button id="theme"></button>
+          <button id="appearance-btn" class="tool" title="Appearance: theme, text and background">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 1 10-10c0 2.8-2.2 4-4 4h-2.2a1.8 1.8 0 0 0-1.3 3.1A1.8 1.8 0 0 1 12 22z"/><circle cx="7.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="12" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="10.5" r="1.2" fill="currentColor"/></svg>
+          </button>
         </nav>
+        <aside id="settings" hidden></aside>
         <div id="update" hidden>
           <span id="update-text"></span>
           <button id="update-install" class="primary"></button>
@@ -604,7 +651,7 @@ public sealed class MainForm : Form
           <p class="actions"><button id="new-empty">New file</button> <button id="open-empty">Open files…</button></p>
           <div id="recent" hidden><h2>Recent</h2><ul></ul></div>
           <p class="hint">Ctrl+N new · Ctrl+O open · Ctrl+S save · Ctrl+Shift+S save as · Ctrl+1 / 2 / 3 preview · markdown · visual<br>
-             Ctrl+Tab next tab · Ctrl+W close tab · Ctrl+Shift+T reopen closed tab · Ctrl+Shift+O outline · Ctrl+F find · Ctrl +/− zoom</p>
+             Ctrl+Tab next tab · Ctrl+W close tab · Ctrl+Shift+T reopen closed tab · Ctrl+Shift+O outline · Ctrl+P print · Ctrl+F find · Ctrl +/− zoom</p>
           <p class="version">Version {{Version}}</p>
         </div>
         </div>
@@ -657,6 +704,7 @@ public sealed class MainForm : Form
             <link rel="stylesheet" href="{{ResPrefix}}web/app.css">
             <link rel="stylesheet" media="(prefers-color-scheme: light)" href="{{ResPrefix}}lib/hljs/github.min.css">
             <link rel="stylesheet" media="(prefers-color-scheme: dark)" href="{{ResPrefix}}lib/hljs/github-dark.min.css">
+            <link rel="stylesheet" href="/__theme.css?v={{_themeVersion}}" data-theme-css data-v="{{_themeVersion}}">
             </head>
             <body>
             <header id="bar">
@@ -683,6 +731,7 @@ public sealed class MainForm : Form
             </div>
             <footer id="status"><span id="st-left"></span><span id="st-right"></span></footer>
             <script type="application/json" id="init">{{init}}</script>
+            <script src="{{ResPrefix}}web/text.js"></script>
             <script src="{{ResPrefix}}web/app.js"></script>
             </body>
             </html>
@@ -692,7 +741,8 @@ public sealed class MainForm : Form
     // ---------- window & session ----------
 
     sealed record Settings(int X, int Y, int Width, int Height, bool Maximized, string[]? Tabs, int Active,
-        string? Theme = null, string[]? Recent = null, DateTime? LastUpdateCheck = null, string? SkipVersion = null);
+        string? Theme = null, string[]? Recent = null, DateTime? LastUpdateCheck = null, string? SkipVersion = null,
+        AppearanceSettings? Appearance = null);
 
     static Settings? LoadSettings()
     {
@@ -720,8 +770,8 @@ public sealed class MainForm : Form
             var tabs = ids.Select(id => _docs[id].Path!).ToArray();
             Directory.CreateDirectory(DataDir);
             File.WriteAllText(SettingsFile, Json(new Settings(b.X, b.Y, b.Width, b.Height,
-                WindowState == FormWindowState.Maximized, tabs, ids.IndexOf(_activeId), _theme, [.. _recent],
-                _lastUpdateCheck, _skipVersion)));
+                WindowState == FormWindowState.Maximized, tabs, ids.IndexOf(_activeId), _look.Theme, [.. _recent],
+                _lastUpdateCheck, _skipVersion, _look)));
         }
         catch { }
     }
@@ -756,18 +806,23 @@ public sealed class MainForm : Form
     [DllImport("user32.dll")]
     static extern bool SetForegroundWindow(IntPtr hwnd);
 
-    // ---------- theme ----------
+    // ---------- appearance (theme, text, background) ----------
 
-    bool IsDark => _theme == "dark" || (_theme == "system" && WindowsIsDark);
+    Theme CurrentTheme => _themes.FirstOrDefault(t => t.Id == _look.Theme) ?? _themes[0];
+
+    bool IsDark => CurrentTheme.Id == "system" ? WindowsIsDark : CurrentTheme.Dark;
 
     /// <summary>
-    /// Pages style themselves with prefers-color-scheme, so the WebView2 profile's preferred
-    /// scheme switches every tab at once; the native title bar and background follow here.
+    /// Pages switch their light/dark base with prefers-color-scheme, which the WebView2 profile's
+    /// preferred scheme sets for every tab at once; the native title bar and background follow here.
+    /// Theme colors come from /__theme.css (see <see cref="Appearance.BuildCss"/>).
     /// </summary>
     void ApplyTheme()
     {
         var dark = IsDark;
-        var bg = dark ? Color.FromArgb(13, 17, 23) : Color.White;
+        var vars = Appearance.ReadVariables(CurrentTheme.Css);
+        var bg = vars.TryGetValue("--bg", out var hex) && TryParseColor(hex, out var c) ? c
+            : dark ? Color.FromArgb(13, 17, 23) : Color.White;
         BackColor = bg;
         _web.DefaultBackgroundColor = bg;
         if (IsHandleCreated)
@@ -776,19 +831,148 @@ public sealed class MainForm : Form
             DwmSetWindowAttribute(Handle, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref value, sizeof(int));
         }
         if (_web.CoreWebView2 is { } core)
-            core.Profile.PreferredColorScheme = _theme switch
+            core.Profile.PreferredColorScheme = CurrentTheme.Id == "system" ? CoreWebView2PreferredColorScheme.Auto
+                : dark ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
+    }
+
+    static bool TryParseColor(string value, out Color color)
+    {
+        try { color = ColorTranslator.FromHtml(value.Trim()); return true; }
+        catch { color = default; return false; }
+    }
+
+    /// <summary>Applies the settings the Appearance panel sent (only the fields it changed).</summary>
+    void UpdateAppearance(JsonElement msg)
+    {
+        foreach (var p in msg.EnumerateObject())
+            switch (p.Name)
             {
-                "light" => CoreWebView2PreferredColorScheme.Light,
-                "dark" => CoreWebView2PreferredColorScheme.Dark,
-                _ => CoreWebView2PreferredColorScheme.Auto,
+                case "theme" when _themes.Any(t => t.Id == p.Value.GetString()): _look.Theme = p.Value.GetString()!; break;
+                case "font": _look.Font = p.Value.GetString() ?? "sans"; break;
+                case "fontSize": _look.FontSize = p.Value.GetInt32(); break;
+                case "width": _look.Width = p.Value.GetString() ?? "normal"; break;
+                case "backgroundFit": _look.BackgroundFit = p.Value.GetString() ?? "cover"; break;
+                case "backgroundOpacity": _look.BackgroundOpacity = p.Value.GetInt32(); break;
+                case "backgroundBlur": _look.BackgroundBlur = p.Value.GetInt32(); break;
+                case "paper": _look.Paper = p.Value.GetBoolean(); break;
+            }
+        AppearanceChanged();
+    }
+
+    void AppearanceChanged()
+    {
+        _look.Normalized();
+        _themeVersion++;
+        ApplyTheme();
+        PushAppearance();
+        SaveSettings();
+    }
+
+    /// <summary>Sends the current appearance to the page: it reloads /__theme.css and updates the panel.</summary>
+    void PushAppearance()
+    {
+        if (!_shellReady) return;
+        var windowsDark = WindowsIsDark;
+        var bg = _look.Background is { } file && File.Exists(file) ? file : null;
+        var state = new
+        {
+            version = _themeVersion,
+            theme = _look.Theme,
+            font = _look.Font,
+            fontSize = _look.FontSize,
+            width = _look.Width,
+            background = bg == null ? null : new { name = Path.GetFileName(bg), url = "/" + new Uri(bg).AbsolutePath.TrimStart('/') },
+            backgroundFit = _look.BackgroundFit,
+            backgroundOpacity = _look.BackgroundOpacity,
+            backgroundBlur = _look.BackgroundBlur,
+            paper = _look.Paper,
+            themes = _themes.Select(t => new
+            {
+                id = t.Id, name = t.Name, custom = t.Custom,
+                dark = t.Id == "system" ? windowsDark : t.Dark,
+                swatch = t.Swatch(windowsDark),
+            }),
+        };
+        Shell($"shell.applyAppearance({Json(state)})");
+    }
+
+    void ChooseBackground()
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Title = "Choose a background image",
+            Filter = "Images|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.avif|All files|*.*",
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            // Keep a copy, so the background survives the original being moved or deleted.
+            Directory.CreateDirectory(Appearance.BackgroundsDir);
+            var copy = Path.Combine(Appearance.BackgroundsDir, Path.GetFileName(dlg.FileName));
+            if (!string.Equals(Path.GetFullPath(dlg.FileName), copy, StringComparison.OrdinalIgnoreCase))
+            {
+                RemoveBackgroundFile();
+                File.Copy(dlg.FileName, copy, overwrite: true);
+            }
+            _look.Background = copy;
+            AppearanceChanged();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not use this image:\n\n{ex.Message}", "Markdown Viewer",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>Deletes the current background's copy (only files the app copied into its own folder).</summary>
+    void RemoveBackgroundFile()
+    {
+        if (_look.Background is { } file &&
+            Path.GetDirectoryName(file)!.Equals(Appearance.BackgroundsDir, StringComparison.OrdinalIgnoreCase))
+            try { File.Delete(file); } catch { }
+    }
+
+    /// <summary>Opens a theme file for editing: the default app for .css, or Notepad.</summary>
+    static void OpenInEditor(string file)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(file) { UseShellExecute = true }); }
+        catch { ShellOpenWithArgs("notepad.exe", $"\"{file}\""); }
+    }
+
+    /// <summary>Reloads themes when files in the themes folder change, so a theme being edited updates live.</summary>
+    void WatchThemesFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(Appearance.ThemesDir);
+            _themeWatcher = new FileSystemWatcher(Appearance.ThemesDir, "*.css")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
             };
+            void Changed(object? s, FileSystemEventArgs e)
+            {
+                if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { _themeDebounce.Stop(); _themeDebounce.Start(); });
+            }
+            _themeWatcher.Changed += Changed;
+            _themeWatcher.Created += Changed;
+            _themeWatcher.Deleted += Changed;
+            _themeWatcher.Renamed += (s, e) => Changed(s, e);
+            _themeWatcher.EnableRaisingEvents = true;
+            _themeDebounce.Tick += (_, _) =>
+            {
+                _themeDebounce.Stop();
+                _themes = Appearance.LoadThemes();
+                if (_themes.All(t => t.Id != _look.Theme)) _look.Theme = "system"; // its file was deleted
+                AppearanceChanged();
+            };
+        }
+        catch { /* no live reload; themes still load at startup */ }
     }
 
     void OnWindowsThemeChanged(object? sender, UserPreferenceChangedEventArgs e)
     {
-        if (_theme == "system" && !IsDisposed) BeginInvoke(ApplyTheme);
+        if (CurrentTheme.Id == "system" && !IsDisposed) BeginInvoke(() => { ApplyTheme(); PushAppearance(); });
     }
-
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
@@ -797,7 +981,7 @@ public sealed class MainForm : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) SystemEvents.UserPreferenceChanged -= OnWindowsThemeChanged;
+        if (disposing) { SystemEvents.UserPreferenceChanged -= OnWindowsThemeChanged; _themeWatcher?.Dispose(); _themeDebounce.Dispose(); }
         if (disposing) foreach (var doc in _docs.Values) doc.Dispose();
         base.Dispose(disposing);
     }

@@ -6,6 +6,7 @@
   let dark = darkQuery.matches;
   // This page runs in a tab iframe; the shell (parent) relays messages to the app.
   const post = msg => parent.shell.fromDoc(init.id, msg);
+  const { headingsFromText, countWords, fixVisual } = window.MdText; // web/text.js
 
   // ---------- bundled libraries, loaded on demand ----------
   const LIB = '/__res/lib/';
@@ -22,6 +23,23 @@
     document.head.append(l);
   };
 
+  // Diagrams take their colors from the current theme's CSS variables.
+  function mermaidTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = name => cs.getPropertyValue(name).trim();
+    const hex = /^#[0-9a-f]{3,8}$/i;
+    if (![v('--bg'), v('--fg'), v('--code-bg')].every(c => hex.test(c))) return { theme: dark ? 'dark' : 'default' };
+    return {
+      theme: 'base',
+      themeVariables: {
+        darkMode: dark, background: v('--bg'), fontFamily: getComputedStyle(C).fontFamily,
+        primaryColor: v('--code-bg'), primaryTextColor: v('--fg'), primaryBorderColor: v('--border'),
+        secondaryColor: v('--bar'), tertiaryColor: v('--bg'), lineColor: v('--muted'), textColor: v('--fg'),
+        noteBkgColor: v('--warn-bg'), noteTextColor: v('--warn-fg'),
+      },
+    };
+  }
+
   async function enhance() {
     const codes = C.querySelectorAll('pre > code');
     if (codes.length) try {
@@ -31,7 +49,7 @@
     const diagrams = C.querySelectorAll('.mermaid');
     if (diagrams.length) try {
       await load('mermaid/mermaid.min.js');
-      mermaid.initialize({ startOnLoad: false, theme: dark ? 'dark' : 'default' });
+      mermaid.initialize({ startOnLoad: false, ...mermaidTheme() });
       await mermaid.run({ nodes: diagrams });
     } catch {}
     if (C.querySelector('.math')) try {
@@ -54,11 +72,6 @@
   // user's exact source, `rawMd` holds the text as it was when Visual mode was
   // entered, and is used unless something was actually edited there.
   let rawMd = init.md, visualEdited = false;
-
-  // Toast UI's WYSIWYG serializer escapes footnotes ("\[^1\]: text\."), which breaks them.
-  const fixVisual = md => md
-    .replace(/\\\[\^([^\]\n]+?)\\\]/g, '[^$1]')
-    .replace(/^(\[\^[^\]\n]+\]:.*)$/gm, line => line.replace(/\\\./g, '.'));
 
   function currentMarkdown() {
     if (!editor) return doc;
@@ -155,32 +168,6 @@
   const HEADINGS = 'h1,h2,h3,h4,h5,h6';
   let outline = [];   // { level, text, line? } in document order
 
-  const stripInline = s => s
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')   // links, images
-    .replace(/[*_`~]/g, '')
-    .replace(/<[^>]+>/g, '')
-    .trim();
-
-  // Headings from markdown source (editor modes): ATX "# x" and setext "x\n===", skipping code fences.
-  function headingsFromText(md) {
-    const out = [], lines = md.split('\n');
-    let fence = null;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      const f = l.match(/^\s{0,3}(`{3,}|~{3,})/);
-      if (f) { if (!fence) fence = f[1]; else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = null; continue; }
-      if (fence) continue;
-      const atx = l.match(/^\s{0,3}(#{1,6})\s+(.*?)(\s+#+)?\s*$/);
-      if (atx) { out.push({ level: atx[1].length, text: stripInline(atx[2]), line: i + 1 }); continue; }
-      const next = lines[i + 1];
-      if (next !== undefined && l.trim() && (i === 0 || !lines[i - 1].trim()) && !/^\s*([-*+>]|\d+[.)])\s/.test(l)) {
-        if (/^\s{0,3}=+\s*$/.test(next)) { out.push({ level: 1, text: stripInline(l), line: i + 1 }); i++; }
-        else if (/^\s{0,3}-+\s*$/.test(next)) { out.push({ level: 2, text: stripInline(l), line: i + 1 }); i++; }
-      }
-    }
-    return out;
-  }
-
   function refreshOutline() {
     if ($('outline').hidden) return;
     outline = mode === 'preview'
@@ -242,14 +229,6 @@
   addEventListener('storage', e => { if (e.key === 'outline') toggleOutline(e.newValue === '1', false); });
 
   // ---------- status bar ----------
-  function countWords(md) {
-    const text = md
-      .replace(/^(`{3,}|~{3,})[\s\S]*?^\1/gm, ' ')   // fenced code
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/<[^>]+>/g, ' ');
-    return (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’_-]*/gu) || []).length;
-  }
-
   function updateStatus() {
     const words = countWords(mode === 'preview' ? renderedMd : currentMarkdown());
     const minutes = Math.max(1, Math.round(words / 200));
@@ -308,14 +287,21 @@
   $('b-load').addEventListener('click', () => pending && apply(pending.md, pending.html));
   $('b-keep').addEventListener('click', () => { pending = null; $('banner').hidden = true; });
 
-  // Theme switched (from the app's theme button or Windows): CSS follows by itself;
-  // the editor and Mermaid diagrams pick their theme in JS, so update those.
-  darkQuery.addEventListener('change', e => {
-    dark = e.matches;
-    $('editor').querySelector('.toastui-editor-defaultUI')?.classList.toggle('toastui-editor-dark', dark);
-    if (C.querySelector('.mermaid')) post({ type: 'render', md: renderedMd });
-  });
+  // Theme changed (Appearance panel or Windows): CSS follows by itself; the editor and Mermaid
+  // diagrams pick their colors in JS, so update those. Both triggers can fire for one change.
+  let themeTimer = 0;
+  function themeChanged() {
+    clearTimeout(themeTimer);
+    themeTimer = setTimeout(() => {
+      dark = darkQuery.matches;
+      $('editor').querySelector('.toastui-editor-defaultUI')?.classList.toggle('toastui-editor-dark', dark);
+      if (C.querySelector('.mermaid')) post({ type: 'render', md: renderedMd });
+    }, 50);
+  }
+  darkQuery.addEventListener('change', themeChanged);
 
+  // Called by the shell with the new /__theme.css version (same loader as the shell's).
+  window.__setTheme = version => parent.reloadThemeCss(document, version, themeChanged);
   // In-page anchors (the <base> tag would otherwise turn them into navigations).
   C.addEventListener('click', e => {
     const a = e.target.closest('a[href^="#"]');

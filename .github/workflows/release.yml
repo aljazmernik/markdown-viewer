@@ -1,4 +1,4 @@
-# Builds and publishes a GitHub Release when a version tag is pushed:
+# Runs the tests, then builds and publishes a GitHub Release when a version tag is pushed:
 #   git tag v1.3.0 && git push origin v1.3.0
 #
 # Release notes come from release-notes/<tag>.md if that file exists, otherwise GitHub
@@ -29,6 +29,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
+
+      - name: Run tests
+        shell: pwsh
+        run: ./tools/test.ps1
 
       - name: Prepare code signing certificate
         if: env.CODESIGN_PFX_BASE64 != ''

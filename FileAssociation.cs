@@ -15,22 +15,25 @@ static class FileAssociation
     static readonly string IconPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MarkdownViewer", "file.ico");
 
-    public static void Register()
-    {
-        var exe = Environment.ProcessPath!;
+    /// <summary>Registry location under HKCU; tests point this at a scratch key.</summary>
+    internal static string ClassesKey { get; set; } = @"Software\Classes";
 
+    public static void Register() => Register(Environment.ProcessPath!);
+
+    internal static void Register(string exe)
+    {
         // The exe is a single file, so the document icon is written next to the app data.
         Directory.CreateDirectory(Path.GetDirectoryName(IconPath)!);
         using (var res = typeof(FileAssociation).Assembly.GetManifestResourceStream("file.ico")!)
         using (var file = File.Create(IconPath))
             res.CopyTo(file);
 
-        using var classes = Registry.CurrentUser.CreateSubKey(@"Software\Classes");
+        using var classes = Registry.CurrentUser.CreateSubKey(ClassesKey);
         using (var prog = classes.CreateSubKey(ProgId))
         {
             prog.SetValue("", "Markdown Document");
             using (var icon = prog.CreateSubKey("DefaultIcon")) icon.SetValue("", $"{IconPath},0");
-            using (var cmd = prog.CreateSubKey(@"shell\open\command")) cmd.SetValue("", $"\"{exe}\" \"%1\"");
+            using (var cmd = prog.CreateSubKey(@"shell\open\command")) cmd.SetValue("", Command(exe));
 
             foreach (var ext in Extensions)
             {
@@ -46,18 +49,34 @@ static class FileAssociation
         NotifyShell();
     }
 
-    public static void Unregister()
+    public static bool Unregister(bool onlyIfRegisteredHere) => Unregister(Environment.ProcessPath!, onlyIfRegisteredHere);
+
+    /// <summary>
+    /// Removes the registration and restores the previous default app. With
+    /// <paramref name="onlyIfRegisteredHere"/>, does nothing (returns false) unless the registration
+    /// opens files with <paramref name="exe"/>; the installer uses this on uninstall so it never
+    /// removes a registration made by another copy of the app.
+    /// </summary>
+    internal static bool Unregister(string exe, bool onlyIfRegisteredHere)
     {
-        using var classes = Registry.CurrentUser.CreateSubKey(@"Software\Classes");
+        using var classes = Registry.CurrentUser.CreateSubKey(ClassesKey);
         using (var prog = classes.OpenSubKey(ProgId))
         {
+            if (prog == null) return false;
+            if (onlyIfRegisteredHere)
+            {
+                using var cmd = prog.OpenSubKey(@"shell\open\command");
+                if (!string.Equals(cmd?.GetValue("") as string, Command(exe), StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+
             foreach (var ext in Extensions)
             {
                 using var key = classes.OpenSubKey(ext, writable: true);
                 if (key == null) continue;
                 if (key.GetValue("") as string == ProgId)
                 {
-                    if (prog?.GetValue("Previous" + ext) is string previous) key.SetValue("", previous);
+                    if (prog.GetValue("Previous" + ext) is string previous) key.SetValue("", previous);
                     else key.DeleteValue("", throwOnMissingValue: false);
                 }
                 using var openWith = key.OpenSubKey("OpenWithProgids", writable: true);
@@ -65,9 +84,12 @@ static class FileAssociation
             }
         }
         classes.DeleteSubKeyTree(ProgId, throwOnMissingSubKey: false);
-        try { File.Delete(IconPath); } catch { }
+        if (ClassesKey == @"Software\Classes") try { File.Delete(IconPath); } catch { }
         NotifyShell();
+        return true;
     }
+
+    static string Command(string exe) => $"\"{exe}\" \"%1\"";
 
     static void NotifyShell() => SHChangeNotify(0x08000000 /* SHCNE_ASSOCCHANGED */, 0, IntPtr.Zero, IntPtr.Zero);
 

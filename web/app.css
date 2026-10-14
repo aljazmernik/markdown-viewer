@@ -125,7 +125,9 @@ body.dirty #name::after { content: " \2022 edited"; color: var(--accent); }
 #editor .toastui-editor-defaultUI { border: 0; border-radius: 0; }
 
 /* ---------- rendered markdown ---------- */
-.markdown-body { max-width: 900px; margin: 0 auto; padding: 32px 40px 80px; word-wrap: break-word; }
+/* --font-size, --font-body and --content-width come from the Appearance settings (/__theme.css). */
+.markdown-body { max-width: var(--content-width, 900px); margin: 0 auto; padding: 32px 40px 80px; word-wrap: break-word;
+                 font-size: var(--font-size, 16px); font-family: var(--font-body, inherit); }
 .markdown-body > :first-child { margin-top: 0 !important; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 { margin: 24px 0 16px; font-weight: 600; line-height: 1.25; }
@@ -161,3 +163,65 @@ body.dirty #name::after { content: " \2022 edited"; color: var(--accent); }
 .welcome .actions button + button { margin-left: 8px; }
 .welcome .hint { font-size: .85em; margin-top: 32px; line-height: 2; }
 .welcome .version { font-size: .75em; opacity: .7; margin-top: 24px; }
+
+/* ---------- editor follows the theme colors ---------- */
+#editor .toastui-editor-defaultUI { border: 0; background: var(--bg); }
+#editor .toastui-editor-defaultUI-toolbar { background: var(--bar) !important; border-bottom-color: var(--border) !important; }
+#editor .toastui-editor-toolbar-icons { border-color: transparent !important; }
+#editor .toastui-editor-toolbar-divider { background: var(--border) !important; }
+#editor .toastui-editor-main, #editor .toastui-editor-md-container, #editor .toastui-editor-ww-container,
+#editor .toastui-editor-md-preview, #editor .toastui-editor .ProseMirror, #editor .toastui-editor-contents {
+  background: var(--bg) !important; color: var(--fg);
+}
+#editor .toastui-editor-md-splitter { background: var(--border) !important; }
+#editor .toastui-editor-md-code-block-line-background, #editor .toastui-editor-md-code { background: var(--code-bg) !important; }
+#editor .toastui-editor-contents { font-size: var(--font-size, 16px); font-family: var(--font-body, inherit); }
+#editor .toastui-editor-contents :is(p, li, h1, h2, h3, h4, h5, h6, td, th) { color: var(--fg); }
+#editor .toastui-editor-contents :is(h1, h2) { border-bottom-color: var(--border); }
+#editor .toastui-editor-contents pre, #editor .toastui-editor-contents code { background: var(--code-bg); }
+#editor .toastui-editor-contents a { color: var(--link); }
+#editor .toastui-editor-md-container .ProseMirror { font-size: calc(var(--font-size, 16px) - 2px); }
+
+/* ---------- Appearance panel ---------- */
+#appearance-btn.on { background: var(--bar); color: var(--accent); }
+#settings { position: fixed; z-index: 80; top: 36px; right: 0; bottom: 0; width: 330px; overflow-y: auto;
+            background: var(--bg); color: var(--fg); border-left: 1px solid var(--border);
+            box-shadow: -8px 0 24px rgb(0 0 0 / .15); font-size: 13px; }
+#settings header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 4px; }
+#settings h2 { margin: 0; font-size: 15px; font-weight: 600; border: 0; }
+#settings h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+#settings section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+#settings footer { padding: 12px 14px 20px; }
+#settings button { font: inherit; color: var(--fg); background: var(--bar); border: 1px solid var(--border);
+                   border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+#settings button:hover:not(:disabled) { border-color: var(--accent); }
+#settings button:disabled { opacity: .45; cursor: default; }
+#settings button.x { border: 0; background: transparent; font-size: 18px; line-height: 1; padding: 2px 6px; color: var(--muted); }
+#settings .buttons { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+#settings .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+#settings .row > span:first-child { width: 62px; flex: none; color: var(--muted); }
+#settings .row input[type=range] { flex: 1; accent-color: var(--accent); }
+#settings .row output { width: 44px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+#settings .row.check { cursor: pointer; }
+#settings .row.check input { accent-color: var(--accent); margin: 0 0 0 72px; }
+#settings .row.check span { width: auto; color: var(--fg); }
+#settings .seg { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 7px; }
+#settings .seg button { border: 0; background: transparent; padding: 3px 8px; }
+#settings .seg button.on { background: var(--accent); color: var(--on-accent); }
+#bg-options.disabled { opacity: .5; }
+#bg-thumb { height: 96px; border-radius: 8px; border: 1px dashed var(--border); background: var(--bar) center / cover no-repeat;
+            display: grid; place-items: center; color: var(--muted); }
+
+#theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+#settings .theme-card { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 4px; border-radius: 8px;
+                        background: transparent; border: 2px solid transparent; text-align: left; }
+#settings .theme-card:hover { border-color: var(--border); }
+#settings .theme-card.on { border-color: var(--accent); }
+.tc-preview { position: relative; display: block; height: 46px; border-radius: 5px; border: 1px solid; overflow: hidden; }
+.tc-bar { position: absolute; left: 0; right: 0; top: 0; height: 10px; }
+.tc-text { position: absolute; left: 8px; bottom: 5px; font-size: 17px; font-weight: 600; font-family: Georgia, serif; }
+.tc-dot { position: absolute; right: 8px; bottom: 9px; width: 10px; height: 10px; border-radius: 50%; }
+.tc-name { font-size: 12px; padding: 0 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tc-edit { position: absolute; top: 18px; right: 8px; font-size: 11px; padding: 1px 6px; border-radius: 4px;
+           background: var(--bg); color: var(--fg); border: 1px solid var(--border); opacity: 0; }
+.theme-card:hover .tc-edit, .theme-card:focus-visible .tc-edit { opacity: 1; }

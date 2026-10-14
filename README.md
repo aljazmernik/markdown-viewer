@@ -38,7 +38,18 @@ Each file has a `.sha256` checksum next to it on the release page.
 - Recent files, reopen a closed tab, and a right-click menu on tabs
 - Outline sidebar that follows the section you're reading
 - Status bar with word count, reading time, cursor position and line endings
-- Light, dark, or follow the Windows theme
+
+**Appearance** (palette button at the top right)
+- Themes: System, Light, Dark, Sepia, Solarized Light, Nord, Solarized Dark, or your own (see below). The editor, code and diagrams follow the theme.
+- Text: sans or serif font, size, and reading width
+- Background image behind the document, with fit, visibility and blur, and an optional "paper" card behind the text
+
+![The Appearance panel with the Nord theme selected](docs/appearance.png)
+
+**Export and print**
+- Export as PDF, or as a single self-contained HTML file (images, diagrams and math embedded): folder button → *Export as…*
+- Print with Ctrl+P
+- Exports always use a light, print-friendly style
 
 ## Keyboard shortcuts
 
@@ -52,6 +63,7 @@ Each file has a `.sha256` checksum next to it on the release page.
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+W | Close tab |
 | Ctrl+Shift+T | Reopen closed tab |
+| Ctrl+P | Print |
 | F5 | Reload file from disk |
 | Ctrl+F | Find in page |
 | Ctrl + / Ctrl − | Zoom |
@@ -66,6 +78,23 @@ A few seconds after starting (at most once a day), the app checks this repositor
 
 You can also check any time with the folder button → **Check for updates**.
 
+## Custom themes
+
+In the Appearance panel, **New theme from current** creates a theme file and opens it for editing. Save the file and the app updates right away. Theme files are plain CSS in `%LOCALAPPDATA%\MarkdownViewer\themes\`:
+
+```css
+/* Markdown Viewer theme | name: Forest | base: dark */
+:root {
+  --bg: #1b2a1f;  --fg: #e3efe0;  --muted: #9db8a2;
+  --bar: #23382a; --strip: #142019; --border: #3c5a44;
+  --code-bg: #23382a; --link: #8fd694; --accent: #6fbf73; --on-accent: #0d1a10;
+}
+/* optional extra rules, e.g. code colors */
+.hljs-keyword { color: #f0c674; }
+```
+
+`base` picks the light or dark style for the editor, code highlighting and the window title bar.
+
 ## Open `.md` files with Markdown Viewer
 
 To make it the default app for `.md` and `.markdown` files, with its own document icon in Explorer, run once:
@@ -74,7 +103,7 @@ To make it the default app for `.md` and `.markdown` files, with its own documen
 "%LOCALAPPDATA%\Programs\Markdown Viewer\MarkdownViewer.exe" --register
 ```
 
-(For the portable exe, use its own path.) This only affects your user account. `--unregister` restores the previous default.
+(For the portable exe, use its own path.) This only affects your user account. `--unregister` restores the previous default. Uninstalling from *Settings → Apps* also removes it, if it points at the installed copy.
 
 ## Building from source
 
@@ -82,18 +111,26 @@ Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
 
 ```powershell
 dotnet publish -c Release -o publish      # -> publish\MarkdownViewer.exe
+.\tools\test.ps1                          # run all tests
 ```
+
+### Tests
+
+- `tests/MarkdownViewer.Tests`: C# (xUnit): rendering, saving with CRLF/LF/BOM, update feed and checksum parsing, file association, themes and appearance settings
+- `tests/web`: JavaScript (`node --test`) for `web/text.js`: outline headings, word count, the Visual mode footnote fix
+
+GitHub Actions runs both before every build; a failing test stops the release.
 
 ### Releasing
 
 Releases are built and published by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
 
-1. Set the new version in `MarkdownViewer.csproj` (`<Version>1.3.0</Version>`).
-2. Optionally write the release notes in `release-notes/v1.3.0.md`; otherwise GitHub generates them from the commits.
+1. Set the new version in `MarkdownViewer.csproj` (`<Version>1.4.0</Version>`).
+2. Optionally write the release notes in `release-notes/v1.4.0.md`; otherwise GitHub generates them from the commits.
 3. Commit, then push a tag:
    ```powershell
-   git tag v1.3.0
-   git push origin main v1.3.0
+   git tag v1.4.0
+   git push origin main v1.4.0
    ```
 
 The workflow builds the portable exe, the self-contained installer and their `.sha256` checksums, and publishes them as the GitHub Release for that tag. Every push to `main` also runs the build (without publishing), and the files can be downloaded from the run's artifacts.
@@ -132,12 +169,16 @@ Then submit them as a pull request to [microsoft/winget-pkgs](https://github.com
 
 | Path | What it is |
 |---|---|
-| `Program.cs` | Entry point, single-instance handling, `--register` |
+| `Program.cs` | Entry point, single-instance handling, `--register`, `--uninstall` |
 | `MainForm.cs` | Window, tabs, file handling, and serving the UI to WebView2 |
 | `Doc.cs` | One open file: reading, saving, watching for changes |
+| `MainForm.Export.cs` | Export to PDF/HTML and printing |
+| `Appearance.cs` | Themes (built-in and custom), text and background settings |
+| `MarkdownRenderer.cs` | Markdown to HTML (Markdig) |
 | `FileAssociation.cs` | Per-user `.md` file association |
 | `Updater.cs`, `Authenticode.cs` | Update check against GitHub Releases; download, verify and install |
-| `web/` | The UI: `shell.js` (tab bar) and `app.js` (document, editor, outline) |
+| `web/` | The UI: `shell.js` (tab bar, Appearance panel), `app.js` (document, editor, outline), `text.js`, `export.js`, `themes/` |
+| `tests/` | C# and JavaScript tests |
 | `lib/` | Bundled third-party libraries (see below) |
 | `installer/Package.wxs` | MSI installer definition |
 | `tools/` | Release, installer, signing, winget and icon scripts |

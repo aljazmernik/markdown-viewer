@@ -10,13 +10,13 @@
            Scope="perUser"
            Compressed="yes">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Markdown Viewer is already installed." />
+    <!-- AllowSameVersionUpgrades: reinstalling a rebuilt installer of the same version replaces it. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of Markdown Viewer is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Icon Id="AppIcon" SourceFile="$(sys.SOURCEFILEDIR)..\app.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/aljazmernik/markdown-viewer" />
-    <Property Id="ARPNOMODIFY" Value="1" />
 
     <!-- %LOCALAPPDATA%\Programs\Markdown Viewer -->
     <StandardDirectory Id="LocalAppDataFolder">
@@ -47,9 +47,32 @@
       <RegistryValue Root="HKCU" Key="Software\Markdown Viewer" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
+    <!-- Settings > Apps runs the app's own uninstaller ("MarkdownViewer.exe uninstall" option): it first
+         removes a .md registration that points at this copy, then starts the normal MSI uninstall.
+         (Programs started by Windows Installer itself see a stale view of the user's file-type
+         registry, so this cleanup can't run as a custom action.) The MSI's own entry is hidden. -->
+    <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+    <Component Id="UninstallEntry" Directory="INSTALLFOLDER">
+      <RegistryKey Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\MarkdownViewer">
+        <RegistryValue Name="DisplayName" Type="string" Value="Markdown Viewer" KeyPath="yes" />
+        <RegistryValue Name="DisplayVersion" Type="string" Value="[ProductVersion]" />
+        <RegistryValue Name="Publisher" Type="string" Value="Aljaz Mernik" />
+        <RegistryValue Name="DisplayIcon" Type="string" Value="[INSTALLFOLDER]MarkdownViewer.exe,0" />
+        <RegistryValue Name="InstallLocation" Type="string" Value="[INSTALLFOLDER]" />
+        <RegistryValue Name="URLInfoAbout" Type="string" Value="https://github.com/aljazmernik/markdown-viewer" />
+        <RegistryValue Name="UninstallString" Type="string" Value="&quot;[INSTALLFOLDER]MarkdownViewer.exe&quot; --uninstall" />
+        <RegistryValue Name="QuietUninstallString" Type="string" Value="&quot;[INSTALLFOLDER]MarkdownViewer.exe&quot; --uninstall --quiet" />
+        <RegistryValue Name="ProductCode" Type="string" Value="[ProductCode]" />
+        <RegistryValue Name="NoModify" Type="integer" Value="1" />
+        <RegistryValue Name="NoRepair" Type="integer" Value="1" />
+        <RegistryValue Name="EstimatedSize" Type="integer" Value="130000" />
+      </RegistryKey>
+    </Component>
+
     <Feature Id="Main">
       <ComponentRef Id="App" />
       <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="UninstallEntry" />
     </Feature>
   </Package>
 </Wix>
