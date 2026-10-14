@@ -133,7 +133,7 @@ Releases are built and published by GitHub Actions ([`.github/workflows/release.
    git push origin main v1.4.0
    ```
 
-The workflow builds the portable exe, the self-contained installer and their `.sha256` checksums, and publishes them as the GitHub Release for that tag. Every push to `main` also runs the build (without publishing), and the files can be downloaded from the run's artifacts.
+The workflow builds the portable exe, the self-contained installer and their `.sha256` checksums, and publishes them as the GitHub Release for that tag. Pushes to `main` don't run it. To test a build without releasing, start the workflow by hand (*Actions → Release → Run workflow*); its files can be downloaded from the run's artifacts.
 
 To build the same files locally into `releases\`:
 
