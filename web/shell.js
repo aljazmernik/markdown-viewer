@@ -167,8 +167,37 @@
       ...(recent.length ? ['-'] : []),
       ...recent.map(p => ({ label: fileName(p), sub: dirName(p), title: p, action: () => post({ type: 'openPath', path: p }) })),
       ...(recent.length ? ['-', { label: 'Clear recent files', action: () => post({ type: 'clearRecent' }) }] : []),
+      '-',
+      { label: 'Check for updates', sub: `Version ${document.body.dataset.version}`, action: () => post({ type: 'checkUpdates' }) },
     ], r.left, r.bottom + 2);
   }
+
+  // ---------- update banner & toast ----------
+  function showUpdate({ version, canInstall }) {
+    $('update-text').textContent = `Markdown Viewer ${version} is available.`;
+    $('update-install').textContent = canInstall ? 'Install update' : 'Download';
+    $('update-install').title = canInstall ? 'Download and install, then restart the app' : 'Open the download page';
+    updateStatus('', false);
+    $('update').hidden = false;
+  }
+
+  function updateStatus(text, busy) {
+    if (text) $('update-text').textContent = text;
+    for (const id of ['update-install', 'update-notes', 'update-skip', 'update-close']) $(id).disabled = busy;
+  }
+
+  let toastTimer = 0;
+  function toast(text) {
+    $('toast').textContent = text;
+    $('toast').hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4000);
+  }
+
+  $('update-install').addEventListener('click', () => post({ type: 'updateInstall' }));
+  $('update-notes').addEventListener('click', () => post({ type: 'updateNotes' }));
+  $('update-skip').addEventListener('click', () => { post({ type: 'updateSkip' }); $('update').hidden = true; });
+  $('update-close').addEventListener('click', () => { $('update').hidden = true; });
   const update = () => { $('empty').hidden = tabs.size > 0; document.body.classList.toggle('has-tabs', tabs.size > 0); };
 
   // Shared shortcuts; documents forward theirs here too.
@@ -247,6 +276,9 @@
     activate: activateTab,
     renameTab(id, name, path) { const t = tabs.get(id); if (t) setTabName(t.tab, name, path); },
     setRecent,
+    showUpdate,
+    updateStatus,
+    toast,
     reload: id => tabs.get(id)?.frame.contentWindow.location.reload(),
     call(id, fn, ...args) {
       const w = tabs.get(id)?.frame.contentWindow;

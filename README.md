@@ -50,6 +50,16 @@ Get the latest version from the **[Releases page](https://github.com/aljazmernik
 | Ctrl+F | Find in page |
 | Ctrl + / Ctrl − | Zoom |
 
+## Updates
+
+A few seconds after starting (at most once a day), the app checks this repository's latest GitHub release. If there's a newer version, a bar appears under the tabs:
+
+- **Install update** (installed with the MSI): downloads the new installer, asks about unsaved files, updates, and restarts with your tabs restored.
+- **Download** (portable exe): opens the release page.
+- **Skip this version** hides it until the next release.
+
+You can also check any time with the folder button → **Check for updates**.
+
 ## Open `.md` files with Markdown Viewer
 
 To make it the default app for `.md` and `.markdown` files, with its own document icon in Explorer, run once:
@@ -79,6 +89,8 @@ Releases are made with the scripts in `tools/`:
 
 The installer is built with [WiX Toolset](https://wixtoolset.org/) 5, which is pinned as a local .NET tool (`dotnet tool restore` installs it).
 
+To publish, create a GitHub Release with tag `vX.Y.Z` and attach both files from `releases\`. The in-app updater looks for the asset ending in `-setup.msi`.
+
 ### Project layout
 
 | Path | What it is |
@@ -87,6 +99,7 @@ The installer is built with [WiX Toolset](https://wixtoolset.org/) 5, which is p
 | `MainForm.cs` | Window, tabs, file handling, and serving the UI to WebView2 |
 | `Doc.cs` | One open file: reading, saving, watching for changes |
 | `FileAssociation.cs` | Per-user `.md` file association |
+| `Updater.cs` | Update check against GitHub Releases, download and install |
 | `web/` | The UI: `shell.js` (tab bar) and `app.js` (document, editor, outline) |
 | `lib/` | Bundled third-party libraries (see below) |
 | `installer/Package.wxs` | MSI installer definition |

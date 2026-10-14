@@ -40,9 +40,7 @@ public sealed class MainForm : Form
 
     static string SettingsFile => Path.Combine(DataDir, "settings.json");
 
-    static readonly string Version = typeof(MainForm).Assembly
-        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "";
+    static string Version => Updater.CurrentText;
 
     readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     readonly Dictionary<int, Doc> _docs = [];
@@ -54,6 +52,10 @@ public sealed class MainForm : Form
     string? _startupActive;
     string _theme = "system";   // "system" (follow Windows), "light" or "dark"
     List<string> _recent = [];  // most recent first
+    DateTime? _lastUpdateCheck; // UTC
+    string? _skipVersion;       // release tag the user chose to skip
+    UpdateInfo? _update;        // newer release found by the last check
+    bool _updating;
     readonly Stack<string> _closed = new();  // closed tabs' paths, for Ctrl+Shift+T
     int _untitledCount;
     const int MaxRecent = 12;
@@ -70,6 +72,8 @@ public sealed class MainForm : Form
         if (settings != null) RestorePlacement(settings);
         if (settings?.Theme is "light" or "dark") _theme = settings.Theme;
         if (settings?.Recent is { } recent) _recent = [.. recent.Take(MaxRecent)];
+        _lastUpdateCheck = settings?.LastUpdateCheck;
+        _skipVersion = settings?.SkipVersion;
         ApplyTheme();
         SystemEvents.UserPreferenceChanged += OnWindowsThemeChanged;
 
@@ -163,6 +167,70 @@ public sealed class MainForm : Form
             if (_docs.Values.Any(d => SamePath(d.Path, path)) || !File.Exists(path)) continue;
             OpenFiles([path]);
             return;
+        }
+    }
+
+    // ---------- updates ----------
+
+    /// <summary>Checks GitHub for a newer release shortly after startup, at most once a day.</summary>
+    async void ScheduleUpdateCheck()
+    {
+        if (_lastUpdateCheck is { } last && DateTime.UtcNow - last < TimeSpan.FromHours(20)) return;
+        await Task.Delay(4000); // let the window and tabs load first
+        if (!IsDisposed) await CheckForUpdatesAsync(manual: false);
+    }
+
+    async Task CheckForUpdatesAsync(bool manual)
+    {
+        UpdateInfo? latest;
+        try { latest = await Updater.GetLatestAsync(); }
+        catch (Exception ex)
+        {
+            if (manual) await Shell($"shell.toast({Json($"Couldn't check for updates: {ex.Message}")})");
+            return;
+        }
+        _lastUpdateCheck = DateTime.UtcNow;
+
+        if (latest == null || latest.Version <= Updater.Current)
+        {
+            _update = null;
+            if (manual) await Shell($"shell.toast({Json($"You have the latest version ({Version}).")})");
+            return;
+        }
+        if (!manual && latest.Tag == _skipVersion) return;
+
+        _update = latest;
+        var canInstall = Updater.IsInstalled && latest.MsiUrl != null;
+        await Shell($"shell.showUpdate({Json(new { version = latest.Version.ToString(), canInstall })})");
+    }
+
+    async Task InstallUpdateAsync(UpdateInfo update)
+    {
+        if (_updating) return;
+        if (!Updater.IsInstalled || update.MsiUrl == null)
+        {
+            ShellOpen(update.PageUrl); // portable copy: download it from the release page
+            return;
+        }
+        if (!await ConfirmDiscardAllAsync()) return;
+
+        _updating = true;
+        try
+        {
+            await Shell($"shell.updateStatus({Json("Downloading update…")}, true)");
+            var progress = new Progress<int>(p => _ = Shell($"shell.updateStatus({Json($"Downloading update… {p}%")}, true)"));
+            var msi = await Updater.DownloadInstallerAsync(update, progress);
+
+            await Shell($"shell.updateStatus({Json("Installing… the app will restart.")}, true)");
+            SaveSettings();
+            Updater.InstallAndRestart(msi);
+            _closeConfirmed = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _updating = false;
+            await Shell($"shell.updateStatus({Json($"Update failed: {ex.Message}")}, false)");
         }
     }
 
@@ -302,6 +370,7 @@ public sealed class MainForm : Form
                             ?? _docs.Values.LastOrDefault();
                 if (first != null) await Shell($"shell.activate({first.Id})");
                 PushRecent();
+                ScheduleUpdateCheck();
                 break;
             case "open":
                 ShowOpenDialog();
@@ -318,6 +387,18 @@ public sealed class MainForm : Form
                     MessageBox.Show(this, $"This file no longer exists:\n\n{path}", "Markdown Viewer",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
+                break;
+            case "checkUpdates":
+                await CheckForUpdatesAsync(manual: true);
+                break;
+            case "updateNotes" when _update != null:
+                ShellOpen(_update.PageUrl);
+                break;
+            case "updateSkip" when _update != null:
+                _skipVersion = _update.Tag;
+                break;
+            case "updateInstall" when _update != null:
+                await InstallUpdateAsync(_update);
                 break;
             case "clearRecent":
                 _recent.Clear();
@@ -498,7 +579,7 @@ public sealed class MainForm : Form
         <title>Markdown Viewer</title>
         <link rel="stylesheet" href="{{ResPrefix}}web/app.css">
         </head>
-        <body class="shell" data-theme="{{_theme}}">
+        <body class="shell" data-theme="{{_theme}}" data-version="{{Version}}">
         <nav id="tabs">
           <div id="tablist" role="tablist"></div>
           <button id="new" class="tool" title="New file (Ctrl+N)">+</button>
@@ -509,7 +590,14 @@ public sealed class MainForm : Form
           <span class="spacer"></span>
           <button id="theme"></button>
         </nav>
-        <div id="frames"></div>
+        <div id="update" hidden>
+          <span id="update-text"></span>
+          <button id="update-install" class="primary"></button>
+          <button id="update-notes">What's new</button>
+          <button id="update-skip">Skip this version</button>
+          <button id="update-close" class="x" title="Remind me later">×</button>
+        </div>
+        <div id="frames">
         <div id="empty" class="welcome">
           <h1>Markdown Viewer</h1>
           <p>Drop Markdown files here, or</p>
@@ -519,6 +607,8 @@ public sealed class MainForm : Form
              Ctrl+Tab next tab · Ctrl+W close tab · Ctrl+Shift+T reopen closed tab · Ctrl+Shift+O outline · Ctrl+F find · Ctrl +/− zoom</p>
           <p class="version">Version {{Version}}</p>
         </div>
+        </div>
+        <div id="toast" hidden></div>
         <script src="{{ResPrefix}}web/shell.js"></script>
         </body>
         </html>
@@ -602,7 +692,7 @@ public sealed class MainForm : Form
     // ---------- window & session ----------
 
     sealed record Settings(int X, int Y, int Width, int Height, bool Maximized, string[]? Tabs, int Active,
-        string? Theme = null, string[]? Recent = null);
+        string? Theme = null, string[]? Recent = null, DateTime? LastUpdateCheck = null, string? SkipVersion = null);
 
     static Settings? LoadSettings()
     {
@@ -630,9 +720,17 @@ public sealed class MainForm : Form
             var tabs = ids.Select(id => _docs[id].Path!).ToArray();
             Directory.CreateDirectory(DataDir);
             File.WriteAllText(SettingsFile, Json(new Settings(b.X, b.Y, b.Width, b.Height,
-                WindowState == FormWindowState.Maximized, tabs, ids.IndexOf(_activeId), _theme, [.. _recent])));
+                WindowState == FormWindowState.Maximized, tabs, ids.IndexOf(_activeId), _theme, [.. _recent],
+                _lastUpdateCheck, _skipVersion)));
         }
         catch { }
+    }
+
+    async Task<bool> ConfirmDiscardAllAsync()
+    {
+        foreach (var doc in _docs.Values.Where(d => d.Dirty).ToList())
+            if (!await ConfirmDiscardAsync(doc)) return false;
+        return true;
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -642,8 +740,7 @@ public sealed class MainForm : Form
             e.Cancel = true;
             BeginInvoke(async () =>
             {
-                foreach (var doc in _docs.Values.Where(d => d.Dirty).ToList())
-                    if (!await ConfirmDiscardAsync(doc)) return;
+                if (!await ConfirmDiscardAllAsync()) return;
                 _closeConfirmed = true;
                 Close();
             });
