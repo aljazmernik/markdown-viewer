@@ -2,14 +2,20 @@
 
 A fast Windows desktop app for reading and editing Markdown files: tabs, a live preview, and two ways to edit, either the Markdown source or a visual editor.
 
+![Markdown Viewer with three tabs open, the outline sidebar, and a rendered document](docs/screenshot.png)
+
 ## Download
 
 Get the latest version from the **[Releases page](https://github.com/aljazmernik/markdown-viewer/releases)**:
 
-- **`MarkdownViewer-x.y.z-setup.msi`**: installer. It installs for your user only (no admin rights needed), adds a Start Menu shortcut, and can be removed from *Settings → Apps*.
-- **`MarkdownViewer-x.y.z.exe`**: portable single file. Put it anywhere and run it.
+- **`MarkdownViewer-x.y.z-setup.msi`** (recommended): installer. It includes everything it needs, installs for your user only (no admin rights), adds a Start Menu shortcut, updates itself, and can be removed from *Settings → Apps*.
+- **`MarkdownViewer-x.y.z.exe`**: small portable file. It needs the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) (x64); if that's missing, Windows offers to download it the first time.
 
-**Requirements:** Windows 10 or 11 (64-bit), the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) (x64), and the Microsoft Edge WebView2 Runtime, which comes with Windows 11.
+Each file has a `.sha256` checksum next to it on the release page.
+
+**Requirements:** Windows 10 or 11 (64-bit) and the Microsoft Edge WebView2 Runtime, which comes with Windows 11 and current Windows 10.
+
+> If Windows shows "Windows protected your PC", the release isn't code-signed yet. Click **More info → Run anyway**.
 
 ## Features
 
@@ -54,7 +60,7 @@ Get the latest version from the **[Releases page](https://github.com/aljazmernik
 
 A few seconds after starting (at most once a day), the app checks this repository's latest GitHub release. If there's a newer version, a bar appears under the tabs:
 
-- **Install update** (installed with the MSI): downloads the new installer, asks about unsaved files, updates, and restarts with your tabs restored.
+- **Install update** (installed with the MSI): downloads the new installer, checks it against the release's SHA-256 checksum (and, for signed builds, that it's signed by the same publisher), asks about unsaved files, updates, and restarts with your tabs restored.
 - **Download** (portable exe): opens the release page.
 - **Skip this version** hides it until the next release.
 
@@ -78,18 +84,49 @@ Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
 dotnet publish -c Release -o publish      # -> publish\MarkdownViewer.exe
 ```
 
-Releases are made with the scripts in `tools/`:
+### Releasing
+
+Releases are built and published by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
+
+1. Set the new version in `MarkdownViewer.csproj` (`<Version>1.3.0</Version>`).
+2. Optionally write the release notes in `release-notes/v1.3.0.md`; otherwise GitHub generates them from the commits.
+3. Commit, then push a tag:
+   ```powershell
+   git tag v1.3.0
+   git push origin main v1.3.0
+   ```
+
+The workflow builds the portable exe, the self-contained installer and their `.sha256` checksums, and publishes them as the GitHub Release for that tag. Every push to `main` also runs the build (without publishing), and the files can be downloaded from the run's artifacts.
+
+To build the same files locally into `releases\`:
 
 ```powershell
-.\tools\release.ps1          # bump patch version (1.1.0 -> 1.1.1), build exe + installer into releases\
-.\tools\release.ps1 minor    # 1.1.0 -> 1.2.0
-.\tools\release.ps1 major    # 1.1.0 -> 2.0.0
+.\tools\release.ps1          # bump patch version (1.2.0 -> 1.2.1) and build exe + installer
+.\tools\release.ps1 minor    # 1.2.0 -> 1.3.0
+.\tools\release.ps1 major    # 1.2.0 -> 2.0.0
 .\tools\build-installer.ps1  # only rebuild the installer for the current version
 ```
 
-The installer is built with [WiX Toolset](https://wixtoolset.org/) 5, which is pinned as a local .NET tool (`dotnet tool restore` installs it).
+The installer is built with [WiX Toolset](https://wixtoolset.org/) 5, which is pinned as a local .NET tool (`dotnet tool restore` installs it). The in-app updater downloads the release asset ending in `-setup.msi` and requires its checksum (`-setup.msi.sha256`, or GitHub's asset digest).
 
-To publish, create a GitHub Release with tag `vX.Y.Z` and attach both files from `releases\`. The in-app updater looks for the asset ending in `-setup.msi`.
+### Code signing
+
+Signing removes the "Windows protected your PC" warning and lets the updater require that updates come from the same publisher. Once you have a code-signing certificate (`.pfx`), add two repository secrets under *Settings → Secrets and variables → Actions*:
+
+- `CODESIGN_PFX_BASE64`: the certificate file, base64-encoded (`[Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx'))`)
+- `CODESIGN_PFX_PASSWORD`: its password
+
+The workflow then signs the exe and the installer. Locally, set `CODESIGN_PFX_PATH` and `CODESIGN_PFX_PASSWORD` before running `tools\release.ps1`.
+
+### Publishing to winget
+
+After a release is published, generate the [winget](https://learn.microsoft.com/windows/package-manager/) manifests from its installer (download it into `releases\` first if GitHub Actions built it):
+
+```powershell
+.\tools\winget-manifest.ps1 1.3.0     # -> releases\winget\1.3.0\
+```
+
+Then submit them as a pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) under `manifests/a/AljazMernik/MarkdownViewer/1.3.0/`. Once merged, anyone can run `winget install AljazMernik.MarkdownViewer`.
 
 ### Project layout
 
@@ -99,11 +136,12 @@ To publish, create a GitHub Release with tag `vX.Y.Z` and attach both files from
 | `MainForm.cs` | Window, tabs, file handling, and serving the UI to WebView2 |
 | `Doc.cs` | One open file: reading, saving, watching for changes |
 | `FileAssociation.cs` | Per-user `.md` file association |
-| `Updater.cs` | Update check against GitHub Releases, download and install |
+| `Updater.cs`, `Authenticode.cs` | Update check against GitHub Releases; download, verify and install |
 | `web/` | The UI: `shell.js` (tab bar) and `app.js` (document, editor, outline) |
 | `lib/` | Bundled third-party libraries (see below) |
 | `installer/Package.wxs` | MSI installer definition |
-| `tools/` | Release, installer and icon scripts |
+| `tools/` | Release, installer, signing, winget and icon scripts |
+| `.github/workflows/` | Automated release builds |
 
 ## Built with
 
@@ -111,3 +149,9 @@ To publish, create a GitHub Release with tag `vX.Y.Z` and attach both files from
 - [Markdig](https://github.com/xoofx/markdig): Markdown rendering
 - [Toast UI Editor](https://github.com/nhn/tui.editor): Markdown and visual editing
 - [highlight.js](https://highlightjs.org/), [Mermaid](https://mermaid.js.org/), [KaTeX](https://katex.org/)
+
+The licenses of these components are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## License
+
+[MIT](LICENSE) © Aljaz Mernik

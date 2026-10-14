@@ -2,6 +2,7 @@
 bin/
 obj/
 publish/
+publish-sc/
 
 # release executables (attach them to GitHub Releases instead)
 releases/

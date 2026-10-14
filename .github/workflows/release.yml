@@ -1,0 +1,69 @@
+# Builds and publishes a GitHub Release when a version tag is pushed:
+#   git tag v1.3.0 && git push origin v1.3.0
+#
+# Release notes come from release-notes/<tag>.md if that file exists, otherwise GitHub
+# generates them from the commits.
+#
+# Optional code signing: add repository secrets CODESIGN_PFX_BASE64 (the .pfx file, base64)
+# and CODESIGN_PFX_PASSWORD. Without them the files are built unsigned.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+    branches: [main]   # build check: builds the files (as a downloadable artifact) without publishing
+  workflow_dispatch:   # same, started by hand from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      CODESIGN_PFX_BASE64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+      CODESIGN_PFX_PASSWORD: ${{ secrets.CODESIGN_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Prepare code signing certificate
+        if: env.CODESIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CODESIGN_PFX_BASE64))
+          "CODESIGN_PFX_PATH=$pfx" >> $env:GITHUB_ENV
+
+      - name: Build exe, installer and checksums
+        shell: pwsh
+        run: |
+          # The tag decides the version (v1.3.0 -> 1.3.0); a manual run uses the project's version.
+          $version = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}'.TrimStart('v') }
+                     else { [regex]::Match((Get-Content MarkdownViewer.csproj -Raw), '<Version>(.+?)</Version>').Groups[1].Value }
+          ./tools/release.ps1 -Version $version
+          Get-ChildItem releases
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: markdown-viewer
+          path: releases/*
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $notes = "release-notes/$tag.md"
+          $files = Get-ChildItem releases -File | ForEach-Object FullName
+          if (Test-Path $notes) {
+            gh release create $tag @files --title "Markdown Viewer $($tag.TrimStart('v'))" --notes-file $notes
+          } else {
+            gh release create $tag @files --title "Markdown Viewer $($tag.TrimStart('v'))" --generate-notes
+          }

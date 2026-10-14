@@ -7,8 +7,12 @@ using Microsoft.Win32;
 
 namespace MarkdownViewer;
 
-/// <summary>A release newer than this build, from GitHub.</summary>
-sealed record UpdateInfo(Version Version, string Tag, string PageUrl, string? MsiUrl, string? MsiName);
+/// <summary>
+/// A release from GitHub. <see cref="MsiUrl"/> is set only when the release also provides the
+/// installer's SHA-256 (asset digest or a "-setup.msi.sha256" file), so it can be verified.
+/// </summary>
+sealed record UpdateInfo(Version Version, string Tag, string PageUrl, string? MsiUrl, string? MsiName,
+    string? Sha256, string? Sha256Url);
 
 /// <summary>Checks GitHub Releases for a newer version and installs it via the MSI.</summary>
 static class Updater
@@ -58,23 +62,64 @@ static class Updater
         var tag = root.GetProperty("tag_name").GetString() ?? "";
         if (!Version.TryParse(tag.TrimStart('v', 'V'), out var version)) return null;
 
-        string? msiUrl = null, msiName = null;
+        string? msiUrl = null, msiName = null, sha256 = null, sha256Url = null;
+        var files = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
         if (root.TryGetProperty("assets", out var assets))
             foreach (var asset in assets.EnumerateArray())
-            {
-                var name = asset.GetProperty("name").GetString() ?? "";
-                if (!name.EndsWith("-setup.msi", StringComparison.OrdinalIgnoreCase)) continue;
-                msiName = Path.GetFileName(name);
-                msiUrl = asset.GetProperty("browser_download_url").GetString();
-                break;
-            }
+                files[asset.GetProperty("name").GetString() ?? ""] = asset;
+
+        if (files.Keys.FirstOrDefault(n => n.EndsWith("-setup.msi", StringComparison.OrdinalIgnoreCase)) is { } msi)
+        {
+            msiName = Path.GetFileName(msi);
+            msiUrl = files[msi].GetProperty("browser_download_url").GetString();
+            // GitHub reports "sha256:<hex>" for uploaded assets; our own .sha256 file is the fallback.
+            if (files[msi].TryGetProperty("digest", out var digest) && digest.GetString() is { } d &&
+                d.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                sha256 = d[7..];
+            if (files.TryGetValue(msi + ".sha256", out var shaAsset))
+                sha256Url = shaAsset.GetProperty("browser_download_url").GetString();
+            if (sha256 == null && sha256Url == null) msiUrl = null; // can't verify it: offer the download page instead
+        }
 
         var page = root.TryGetProperty("html_url", out var html) ? html.GetString() : null;
-        return new UpdateInfo(version, tag, page ?? "https://github.com/aljazmernik/markdown-viewer/releases", msiUrl, msiName);
+        return new UpdateInfo(version, tag, page ?? "https://github.com/aljazmernik/markdown-viewer/releases",
+            msiUrl, msiName, sha256, sha256Url);
     }
 
-    /// <summary>Downloads the release's installer to the temp folder, reporting progress in percent.</summary>
+    /// <summary>
+    /// Downloads the release's installer to the temp folder (reporting progress in percent) and
+    /// verifies it; throws if the checksum or the publisher signature doesn't match.
+    /// </summary>
     public static async Task<string> DownloadInstallerAsync(UpdateInfo update, IProgress<int> progress)
+    {
+        var expected = update.Sha256 ?? await GetPublishedChecksumAsync(update.Sha256Url!);
+        var target = await DownloadAsync(update, progress);
+        try
+        {
+            string actual;
+            await using (var file = File.OpenRead(target))
+                actual = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(file));
+            if (!actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The downloaded installer doesn't match the release's checksum.");
+            Authenticode.RequireSamePublisher(target);
+            return target;
+        }
+        catch
+        {
+            File.Delete(target);
+            throw;
+        }
+    }
+
+    static async Task<string> GetPublishedChecksumAsync(string url)
+    {
+        var text = await Http.GetStringAsync(url); // "<hex>  <file name>"
+        var hex = text.Trim().Split(' ', '\t')[0];
+        if (hex.Length != 64) throw new InvalidDataException("The release's checksum file is not valid.");
+        return hex;
+    }
+
+    static async Task<string> DownloadAsync(UpdateInfo update, IProgress<int> progress)
     {
         var target = Path.Combine(Path.GetTempPath(), update.MsiName!);
         using var response = await Http.GetAsync(update.MsiUrl, HttpCompletionOption.ResponseHeadersRead);

@@ -101,7 +101,9 @@ body.dirty #name::after { content: " \2022 edited"; color: var(--accent); }
 #bar button.icon.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 #main { flex: 1; display: flex; min-height: 0; }
-#preview { flex: 1; overflow: auto; }
+/* position: relative keeps absolutely positioned content (e.g. KaTeX's hidden MathML) inside
+   the scrolling area instead of stretching the whole page and adding a second scrollbar. */
+#preview { flex: 1; overflow: auto; position: relative; }
 #editor { flex: 1; min-width: 0; min-height: 0; }
 
 /* outline sidebar */

@@ -1,6 +1,6 @@
 <!--
   Per-user MSI (no admin rights needed). Built by tools/build-installer.ps1:
-    dotnet wix build installer/Package.wxs -d Version=1.2.3 -d PublishDir=publish -o setup.msi
+    dotnet wix build installer/Package.wxs -d Version=1.2.3 -d PublishDir=publish-sc -o setup.msi
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Markdown Viewer"
@@ -30,8 +30,12 @@
          uninstalling never changes which app opens .md files.
          Per-user components use an HKCU value as key path (MSI rule for user profiles). -->
     <Component Id="App" Directory="INSTALLFOLDER" Guid="{A3D5C1E7-8B24-4F6A-9C0D-5E1F7B2A8C34}">
+      <!-- Self-contained build (.NET runtime included), so no separate runtime install is needed. -->
       <File Id="AppExe" Source="$(PublishDir)\MarkdownViewer.exe" />
+      <File Id="WebView2Loader" Source="$(PublishDir)\WebView2Loader.dll" />
       <File Id="DocIcon" Source="$(sys.SOURCEFILEDIR)..\file.ico" />
+      <File Id="License" Source="$(sys.SOURCEFILEDIR)..\LICENSE" Name="LICENSE.txt" />
+      <File Id="Notices" Source="$(sys.SOURCEFILEDIR)..\THIRD-PARTY-NOTICES.md" />
       <RegistryValue Root="HKCU" Key="Software\Markdown Viewer" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
       <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
       <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
