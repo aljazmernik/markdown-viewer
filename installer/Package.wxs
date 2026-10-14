@@ -1,0 +1,51 @@
+<!--
+  Per-user MSI (no admin rights needed). Built by tools/build-installer.ps1:
+    dotnet wix build installer/Package.wxs -d Version=1.2.3 -d PublishDir=publish -o setup.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Markdown Viewer"
+           Manufacturer="Aljaz Mernik"
+           Version="$(Version)"
+           UpgradeCode="{6B7E4F2A-3C1D-4E8B-9A5F-2D7C8B1E4F60}"
+           Scope="perUser"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Markdown Viewer is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon" SourceFile="$(sys.SOURCEFILEDIR)..\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/aljazmernik/markdown-viewer" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- %LOCALAPPDATA%\Programs\Markdown Viewer -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Markdown Viewer" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- File associations are left to the app (MarkdownViewer.exe with the register option), so
+         uninstalling never changes which app opens .md files.
+         Per-user components use an HKCU value as key path (MSI rule for user profiles). -->
+    <Component Id="App" Directory="INSTALLFOLDER" Guid="{A3D5C1E7-8B24-4F6A-9C0D-5E1F7B2A8C34}">
+      <File Id="AppExe" Source="$(PublishDir)\MarkdownViewer.exe" />
+      <File Id="DocIcon" Source="$(sys.SOURCEFILEDIR)..\file.ico" />
+      <RegistryValue Root="HKCU" Key="Software\Markdown Viewer" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+    </Component>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
+      <Shortcut Id="AppShortcut" Name="Markdown Viewer" Description="View and edit Markdown files"
+                Target="[INSTALLFOLDER]MarkdownViewer.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\Markdown Viewer" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main">
+      <ComponentRef Id="App" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

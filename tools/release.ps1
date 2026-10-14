@@ -1,4 +1,5 @@
-# Bumps the version in MarkdownViewer.csproj, publishes, and copies the exe to releases\.
+# Bumps the version in MarkdownViewer.csproj, publishes, and puts the exe and the
+# installer (built by build-installer.ps1) in releases\.
 #   .\tools\release.ps1            -> patch  (1.0.0 -> 1.0.1)
 #   .\tools\release.ps1 minor      -> 1.0.1 -> 1.1.0
 #   .\tools\release.ps1 major      -> 1.1.0 -> 2.0.0
@@ -29,4 +30,5 @@ $releases = Join-Path $root 'releases'
 New-Item -ItemType Directory -Force $releases | Out-Null
 $target = Join-Path $releases "MarkdownViewer-$version.exe"
 Copy-Item (Join-Path $root 'publish\MarkdownViewer.exe') $target -Force
+& (Join-Path $PSScriptRoot 'build-installer.ps1')
 "Released $version -> $target"
