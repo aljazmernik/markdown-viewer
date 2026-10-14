@@ -1,0 +1,12 @@
+# build output
+bin/
+obj/
+publish/
+
+# release executables (attach them to GitHub Releases instead)
+releases/
+
+# IDE
+.vs/
+.vscode/
+*.user
