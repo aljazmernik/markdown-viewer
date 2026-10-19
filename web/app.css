@@ -184,6 +184,19 @@ body.dirty #name::after { content: " \2022 edited"; color: var(--accent); }
 
 /* ---------- Appearance panel ---------- */
 #appearance-btn.on { background: var(--bar); color: var(--accent); }
+
+/* zoom level in the tab bar and its − / + / Reset popup */
+#tabs #zoom { gap: 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
+#tabs #zoom.on { background: var(--bar); color: var(--accent); }
+#zoom-pop { position: fixed; z-index: 100; display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 8px;
+            background: var(--bg); border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 13px; }
+#zoom-value { width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
+#zoom-pop button { font: inherit; min-width: 30px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px;
+                   color: var(--fg); background: var(--bar); cursor: pointer; }
+#zoom-pop button:hover:not(:disabled) { border-color: var(--accent); }
+#zoom-pop button:disabled { opacity: .45; cursor: default; }
+#zoom-pop #zoom-out, #zoom-pop #zoom-in { font-size: 16px; line-height: 1; padding: 0; }
+#zoom-pop #zoom-reset { margin-left: 4px; }
 #settings { position: fixed; z-index: 80; top: 36px; right: 0; bottom: 0; width: 330px; overflow-y: auto;
             background: var(--bg); color: var(--fg); border-left: 1px solid var(--border);
             box-shadow: -8px 0 24px rgb(0 0 0 / .15); font-size: 13px; }

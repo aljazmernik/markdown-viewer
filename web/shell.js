@@ -132,6 +132,7 @@
       { label: 'Close tabs to the right', disabled: i === ids.length - 1, action: () => post({ type: 'closeTabs', ids: ids.slice(i + 1) }) },
       '-',
       { label: 'Copy path', disabled: !path, action: () => post({ type: 'copyPath', doc: id }) },
+      { label: 'Copy file name', disabled: !path, action: () => post({ type: 'copyName', doc: id }) },
       { label: 'Show in Explorer', disabled: !path, action: () => post({ type: 'reveal', doc: id }) },
       '-',
       { label: 'Reopen closed tab', key: 'Ctrl+Shift+T', action: () => post({ type: 'reopenClosed' }) },
@@ -169,6 +170,8 @@
       { label: 'Export as PDF…', disabled: active === null, action: () => exportDoc('pdf') },
       { label: 'Export as HTML…', disabled: active === null, action: () => exportDoc('html') },
       { label: 'Print…', key: 'Ctrl+P', disabled: active === null, action: () => exportDoc('print') },
+      '-',
+      { label: 'Reset zoom', key: 'Ctrl+0', action: () => post({ type: 'zoom', value: 1 }) },
       ...(recent.length ? ['-'] : []),
       ...recent.map(p => ({ label: fileName(p), sub: dirName(p), title: p, action: () => post({ type: 'openPath', path: p }) })),
       ...(recent.length ? ['-', { label: 'Clear recent files', action: () => post({ type: 'clearRecent' }) }] : []),
@@ -208,12 +211,14 @@
   // Shared shortcuts; documents forward theirs here too.
   function handleKey(e, fromDoc) {
     const k = e.key.toLowerCase(), ctrl = e.ctrlKey && !e.altKey;
-    if (k === 'escape' && menu) closeMenu();
+    if (k === 'escape' && !zoomPop.hidden) hideZoomPop();
+    else if (k === 'escape' && menu) closeMenu();
     else if (k === 'escape' && !panel.hidden) toggleSettings(false);
     else if (ctrl && k === 'tab') cycle(e.shiftKey ? -1 : 1);
     else if (ctrl && e.shiftKey && k === 't') post({ type: 'reopenClosed' });
     else if (ctrl && !e.shiftKey && k === 'n') post({ type: 'new' });
     else if (ctrl && !e.shiftKey && k === 'p') exportDoc('print');
+    else if (ctrl && !e.shiftKey && (k === '0' || e.code === 'Numpad0')) post({ type: 'zoom', value: 1 });
     else if (ctrl && k === 'pagedown') cycle(1);
     else if (ctrl && k === 'pageup') cycle(-1);
     else if (ctrl && !e.shiftKey && k === 'o') post({ type: 'open' });
@@ -398,7 +403,67 @@
   });
   $('tabs').addEventListener('contextmenu', e => { if (!e.target.closest('.tab')) e.preventDefault(); });
 
+  // ---------- zoom indicator ----------
+  // Like a browser: while zoomed, a "110%" button in the tab bar opens − / + / Reset.
+  // Ctrl +/−/wheel zoom is WebView2's own; the app reports every change through setZoom.
+  const ZOOM_STEPS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
+  const zoomPop = $('zoom-pop');
+  let zoom = null, zoomAuto = false, zoomTimer = 0;
+
+  function setZoom(percent) {
+    const changed = zoom !== null && percent !== zoom;
+    zoom = percent;
+    $('zoom-label').textContent = $('zoom-value').textContent = percent + '%';
+    $('zoom').hidden = percent === 100;
+    $('zoom-out').disabled = percent <= ZOOM_STEPS[0];
+    $('zoom-in').disabled = percent >= ZOOM_STEPS.at(-1);
+    $('zoom-reset').disabled = percent === 100;
+    if (!zoomPop.hidden) placeZoomPop();
+    // After a keyboard or wheel zoom, show the controls for a moment, as browsers do.
+    if (changed && (zoomPop.hidden || zoomAuto)) { showZoomPop(true); hideZoomPopSoon(); }
+  }
+
+  function zoomStep(dir) {
+    const next = dir > 0 ? ZOOM_STEPS.find(s => s > zoom) : ZOOM_STEPS.findLast(s => s < zoom);
+    if (next) post({ type: 'zoom', value: next / 100 });
+  }
+
+  function placeZoomPop() {
+    const anchor = ($('zoom').hidden ? $('appearance-btn') : $('zoom')).getBoundingClientRect();
+    zoomPop.style.top = anchor.bottom + 4 + 'px';
+    zoomPop.style.right = Math.max(4, innerWidth - anchor.right) + 'px';
+  }
+  function showZoomPop(auto) {
+    closeMenu();
+    zoomAuto = auto;
+    zoomPop.hidden = false;
+    placeZoomPop();
+    $('zoom').classList.add('on');
+  }
+  function hideZoomPop() {
+    clearTimeout(zoomTimer);
+    zoomPop.hidden = true;
+    $('zoom').classList.remove('on');
+  }
+  // An automatically shown popup stays while the mouse is over it.
+  function hideZoomPopSoon() {
+    clearTimeout(zoomTimer);
+    zoomTimer = setTimeout(() => { if (!zoomPop.matches(':hover')) hideZoomPop(); }, 2000);
+  }
+
+  $('zoom').addEventListener('click', () => zoomPop.hidden || zoomAuto ? showZoomPop(false) : hideZoomPop());
+  $('zoom-out').addEventListener('click', () => zoomStep(-1));
+  $('zoom-in').addEventListener('click', () => zoomStep(1));
+  $('zoom-reset').addEventListener('click', () => post({ type: 'zoom', value: 1 }));
+  zoomPop.addEventListener('mouseleave', () => { if (zoomAuto) hideZoomPopSoon(); });
+  addEventListener('mousedown', e => {
+    if (!zoomPop.hidden && !zoomPop.contains(e.target) && !e.target.closest('#zoom')) hideZoomPop();
+  }, true);
+  addEventListener('blur', hideZoomPop); // clicked into a document
+  addEventListener('resize', () => { if (!zoomPop.hidden) placeZoomPop(); });
+
   window.shell = {
+    setZoom,
     addTab,
     removeTab,
     activate: activateTab,

@@ -109,7 +109,14 @@ public sealed partial class MainForm : Form
         core.FrameNavigationStarting += (_, e) => OnNavigationStarting(e, DocPath);
         core.NewWindowRequested += (_, e) => { e.Handled = true; HandleLink(e.Uri); };
         core.WebMessageReceived += OnWebMessage;
+        _web.ZoomFactorChanged += (_, _) => PushZoom();
         core.Navigate(Host + ShellPath);
+    }
+
+    /// <summary>Shows the zoom level in the tab bar (hidden at 100%), like a browser.</summary>
+    void PushZoom()
+    {
+        if (_shellReady) _ = Shell($"shell.setZoom({(int)Math.Round(_web.ZoomFactor * 100)})");
     }
 
     // ---------- tabs ----------
@@ -374,6 +381,7 @@ public sealed partial class MainForm : Form
                 if (first != null) await Shell($"shell.activate({first.Id})");
                 PushRecent();
                 PushAppearance();
+                PushZoom();
                 ScheduleUpdateCheck();
                 break;
             case "open":
@@ -417,6 +425,13 @@ public sealed partial class MainForm : Form
                 break;
             case "copyPath" when doc?.Path != null:
                 Clipboard.SetText(doc.Path);
+                break;
+            case "copyName" when doc?.Path != null:
+                Clipboard.SetText(Path.GetFileName(doc.Path));
+                break;
+            case "zoom" when root.TryGetProperty("value", out var z) && z.TryGetDouble(out var factor):
+                _web.ZoomFactor = Math.Clamp(factor, 0.25, 5);
+                PushZoom(); // ZoomFactorChanged only fires for the user's own Ctrl +/− and Ctrl+wheel
                 break;
             case "reveal" when doc?.Path != null:
                 ShellOpenWithArgs("explorer.exe", $"/select,\"{doc.Path}\"");
@@ -632,10 +647,20 @@ public sealed partial class MainForm : Form
             <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
           </button>
           <span class="spacer"></span>
+          <button id="zoom" class="tool" title="Zoom" hidden>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>
+            <span id="zoom-label"></span>
+          </button>
           <button id="appearance-btn" class="tool" title="Appearance: theme, text and background">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 1 10-10c0 2.8-2.2 4-4 4h-2.2a1.8 1.8 0 0 0-1.3 3.1A1.8 1.8 0 0 1 12 22z"/><circle cx="7.5" cy="10.5" r="1.2" fill="currentColor"/><circle cx="12" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="10.5" r="1.2" fill="currentColor"/></svg>
           </button>
         </nav>
+        <div id="zoom-pop" hidden>
+          <button id="zoom-out" title="Zoom out (Ctrl −)">−</button>
+          <span id="zoom-value"></span>
+          <button id="zoom-in" title="Zoom in (Ctrl +)">+</button>
+          <button id="zoom-reset" title="Reset to 100% (Ctrl+0)">Reset</button>
+        </div>
         <aside id="settings" hidden></aside>
         <div id="update" hidden>
           <span id="update-text"></span>
@@ -651,7 +676,7 @@ public sealed partial class MainForm : Form
           <p class="actions"><button id="new-empty">New file</button> <button id="open-empty">Open files…</button></p>
           <div id="recent" hidden><h2>Recent</h2><ul></ul></div>
           <p class="hint">Ctrl+N new · Ctrl+O open · Ctrl+S save · Ctrl+Shift+S save as · Ctrl+1 / 2 / 3 preview · markdown · visual<br>
-             Ctrl+Tab next tab · Ctrl+W close tab · Ctrl+Shift+T reopen closed tab · Ctrl+Shift+O outline · Ctrl+P print · Ctrl+F find · Ctrl +/− zoom</p>
+             Ctrl+Tab next tab · Ctrl+W close tab · Ctrl+Shift+T reopen closed tab · Ctrl+Shift+O outline · Ctrl+P print · Ctrl+F find · Ctrl +/− zoom · Ctrl+0 reset zoom</p>
           <p class="version">Version {{Version}}</p>
         </div>
         </div>

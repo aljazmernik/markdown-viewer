@@ -35,9 +35,10 @@ Each file has a `.sha256` checksum next to it on the release page.
 **Workspace**
 - Tabs, all in one window. Opening another file from Explorer adds a tab instead of a new window.
 - Your open tabs are restored the next time you start the app
-- Recent files, reopen a closed tab, and a right-click menu on tabs
+- Recent files, reopen a closed tab, and a right-click menu on tabs (copy path or file name, show in Explorer)
 - Outline sidebar that follows the section you're reading
 - Status bar with word count, reading time, cursor position and line endings
+- Zoom with Ctrl +/− or Ctrl+wheel. While zoomed, the tab bar shows the level (like *110%*). Click it for −, + and Reset, or press Ctrl+0.
 
 **Appearance** (palette button at the top right)
 - Themes: System, Light, Dark, Sepia, Solarized Light, Nord, Solarized Dark, or your own (see below). The editor, code and diagrams follow the theme.
@@ -67,6 +68,7 @@ Each file has a `.sha256` checksum next to it on the release page.
 | F5 | Reload file from disk |
 | Ctrl+F | Find in page |
 | Ctrl + / Ctrl − | Zoom |
+| Ctrl+0 | Reset zoom |
 
 ## Updates
 
