@@ -171,7 +171,8 @@ public sealed partial class MainForm
 
     // Light colors regardless of the app's theme, a normal scrolling page, and print rules.
     const string ExportCss = """
-        :root { --fg:#1f2328; --muted:#59636e; --bg:#ffffff; --bar:#f6f8fa; --border:#d1d9e0; --code-bg:#f6f8fa; --link:#0969da; }
+        :root { --fg:#1f2328; --muted:#59636e; --bg:#ffffff; --bar:#f6f8fa; --border:#d1d9e0; --code-bg:#f6f8fa; --link:#0969da; --accent:#0969da;
+                --alert-note:#0969da; --alert-tip:#1a7f37; --alert-important:#8250df; --alert-warning:#9a6700; --alert-caution:#d1242f; }
         html, body { height: auto; }
         body.export { display: block; background: #fff; color: var(--fg); }
         body.export .markdown-body { padding: 32px 24px 48px; }

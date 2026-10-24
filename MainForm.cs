@@ -29,8 +29,10 @@ public sealed partial class MainForm : Form
         Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
             "AppsUseLightTheme", 1) is int v && v == 0;
 
-    static readonly string DataDir =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MarkdownViewer");
+    // Settings and the WebView2 profile. MARKDOWNVIEWER_DATA_DIR points a test copy at its own folder,
+    // so it can run beside the installed app without sharing its settings or browser process.
+    static readonly string DataDir = Environment.GetEnvironmentVariable("MARKDOWNVIEWER_DATA_DIR") is { Length: > 0 } dir ? dir
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MarkdownViewer");
 
     static string SettingsFile => Path.Combine(DataDir, "settings.json");
 
@@ -289,6 +291,7 @@ public sealed partial class MainForm : Form
     /// <summary>Saves the document, asking for a file name first if it has none (or for Save As).</summary>
     async Task<bool> SaveDocAsync(Doc doc, string markdown, bool saveAs = false)
     {
+        var oldDir = doc.Path != null ? Path.GetDirectoryName(doc.Path) : null;
         if (saveAs || doc.Path == null)
         {
             var path = AskSavePath(doc);
@@ -312,7 +315,30 @@ public sealed partial class MainForm : Form
         UpdateTitle();
         PushRecent(); // a file created by "Save as" exists only now
         await CallDoc(doc, "__saved");
+        if (oldDir != null && !string.Equals(oldDir, Path.GetDirectoryName(doc.Path), StringComparison.OrdinalIgnoreCase))
+        {
+            await CopyImagesAlongAsync(markdown, oldDir, Path.GetDirectoryName(doc.Path)!);
+            await CallDoc(doc, "__update", Render(markdown)); // reload images from the new folder
+        }
         return true;
+    }
+
+    /// <summary>"Save as" into another folder takes the document's images along (images/x.png).</summary>
+    async Task CopyImagesAlongAsync(string markdown, string fromDir, string toDir)
+    {
+        string message;
+        try
+        {
+            var (copied, outside) = PastedImages.CopyLinked(markdown, fromDir, toDir);
+            var parts = new List<string>();
+            if (copied > 0) parts.Add($"Copied {copied} {(copied == 1 ? "image" : "images")} to the new folder.");
+            if (outside.Count > 0)
+                parts.Add($"Not copied (outside the document's folder): {string.Join(", ", outside.Take(3).Select(p => p.Replace('\\', '/')))}{(outside.Count > 3 ? ", …" : "")}");
+            if (parts.Count == 0) return;
+            message = string.Join(" ", parts);
+        }
+        catch (Exception ex) { message = "Couldn't copy the images to the new folder: " + ex.Message; }
+        await Shell($"shell.toast({Json(message)})");
     }
 
     string? AskSavePath(Doc doc)
@@ -425,6 +451,27 @@ public sealed partial class MainForm : Form
                 break;
             case "copyPath" when doc?.Path != null:
                 Clipboard.SetText(doc.Path);
+                break;
+            case "saveImage" when doc?.Path != null && root.TryGetProperty("req", out var req):
+                string? link = null;
+                try
+                {
+                    var data = Convert.FromBase64String(Str("data") ?? "");
+                    link = PastedImages.Save(doc.Path, Str("name"), Str("mime"), data, DateTime.Now);
+                    if (link == null) await Shell($"shell.toast({Json($"Can't insert this kind of file ({Str("mime")}). Use PNG, JPEG, GIF, WebP, BMP, SVG or AVIF.")})");
+                }
+                catch (Exception ex)
+                {
+                    await Shell($"shell.toast({Json("Couldn't save the image: " + ex.Message)})");
+                }
+                await Shell($"shell.call({doc.Id}, '__imageSaved', {req.GetRawText()}, {Json(link ?? "")})");
+                break;
+            case "fullScreen":
+                // { value: true/false }, or without a value: toggle
+                SetFullScreen(root.TryGetProperty("value", out var fs) ? fs.ValueKind == JsonValueKind.True : !_fullScreen);
+                break;
+            case "link" when Str("href") is { } href:
+                HandleLink(href);
                 break;
             case "copyName" when doc?.Path != null:
                 Clipboard.SetText(Path.GetFileName(doc.Path));
@@ -676,11 +723,12 @@ public sealed partial class MainForm : Form
           <p class="actions"><button id="new-empty">New file</button> <button id="open-empty">Open files…</button></p>
           <div id="recent" hidden><h2>Recent</h2><ul></ul></div>
           <p class="hint">Ctrl+N new · Ctrl+O open · Ctrl+S save · Ctrl+Shift+S save as · Ctrl+1 / 2 / 3 preview · markdown · visual<br>
-             Ctrl+Tab next tab · Ctrl+W close tab · Ctrl+Shift+T reopen closed tab · Ctrl+Shift+O outline · Ctrl+P print · Ctrl+F find · Ctrl +/− zoom · Ctrl+0 reset zoom</p>
+             Ctrl+Tab next tab · Ctrl+W close tab · Ctrl+Shift+T reopen closed tab · Ctrl+Shift+O outline · Ctrl+P print · Ctrl+F find · Ctrl+H replace · F11 full screen · Ctrl +/− zoom · Ctrl+0 reset zoom</p>
           <p class="version">Version {{Version}}</p>
         </div>
         </div>
         <div id="toast" hidden></div>
+        <button id="fs-exit" hidden title="Exit full screen (F11 or Esc)">Exit full screen</button>
         <script src="{{ResPrefix}}web/shell.js"></script>
         </body>
         </html>
@@ -788,17 +836,46 @@ public sealed partial class MainForm : Form
     {
         try
         {
-            var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            // In full screen, remember the window as it was before.
+            var b = _fullScreen ? _beforeFullScreen.Bounds : WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            var maximized = _fullScreen ? _beforeFullScreen.State == FormWindowState.Maximized : WindowState == FormWindowState.Maximized;
             // Untitled (never saved) tabs are not part of the session.
             var ids = _order.Where(_docs.ContainsKey).Concat(_docs.Keys.Except(_order))
                 .Where(id => _docs[id].Path != null).ToList();
             var tabs = ids.Select(id => _docs[id].Path!).ToArray();
             Directory.CreateDirectory(DataDir);
             File.WriteAllText(SettingsFile, Json(new Settings(b.X, b.Y, b.Width, b.Height,
-                WindowState == FormWindowState.Maximized, tabs, ids.IndexOf(_activeId), _look.Theme, [.. _recent],
+                maximized, tabs, ids.IndexOf(_activeId), _look.Theme, [.. _recent],
                 _lastUpdateCheck, _skipVersion, _look)));
         }
         catch { }
+    }
+
+    // ---------- full screen (F11) ----------
+    // The window covers the whole screen without borders; the pages hide their bars (body.focus).
+
+    bool _fullScreen;
+    (Rectangle Bounds, FormWindowState State) _beforeFullScreen;
+
+    void SetFullScreen(bool on)
+    {
+        if (on == _fullScreen) return;
+        if (on)
+        {
+            _beforeFullScreen = (WindowState == FormWindowState.Normal ? Bounds : RestoreBounds, WindowState);
+            var screen = Screen.FromControl(this).Bounds;
+            WindowState = FormWindowState.Normal; // a maximized window can't be resized over the taskbar
+            FormBorderStyle = FormBorderStyle.None;
+            Bounds = screen;
+        }
+        else
+        {
+            FormBorderStyle = FormBorderStyle.Sizable;
+            Bounds = _beforeFullScreen.Bounds;
+            WindowState = _beforeFullScreen.State;
+        }
+        _fullScreen = on;
+        if (_shellReady) _ = Shell($"shell.setFullScreen({(on ? "true" : "false")})");
     }
 
     async Task<bool> ConfirmDiscardAllAsync()

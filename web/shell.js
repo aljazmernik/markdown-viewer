@@ -90,7 +90,14 @@
 
   // ---------- popup menus (tab right-click, open/recent) ----------
   let menu = null;
-  const closeMenu = () => { menu?.remove(); menu = null; };
+  // Keyboard focus back to the active document (after a menu or popup in the tab bar).
+  const focusDoc = () => { if (active !== null) tabs.get(active)?.frame.focus(); };
+  const closeMenu = () => {
+    if (!menu) return;
+    menu.remove();
+    menu = null;
+    if (document.hasFocus() && document.activeElement?.tagName !== 'IFRAME') focusDoc();
+  };
 
   // items: { label, sub?, key?, title?, disabled?, action } or '-' for a separator
   function showMenu(items, x, y) {
@@ -172,6 +179,7 @@
       { label: 'Print…', key: 'Ctrl+P', disabled: active === null, action: () => exportDoc('print') },
       '-',
       { label: 'Reset zoom', key: 'Ctrl+0', action: () => post({ type: 'zoom', value: 1 }) },
+      { label: 'Full screen', key: 'F11', action: () => post({ type: 'fullScreen' }) },
       ...(recent.length ? ['-'] : []),
       ...recent.map(p => ({ label: fileName(p), sub: dirName(p), title: p, action: () => post({ type: 'openPath', path: p }) })),
       ...(recent.length ? ['-', { label: 'Clear recent files', action: () => post({ type: 'clearRecent' }) }] : []),
@@ -214,6 +222,8 @@
     if (k === 'escape' && !zoomPop.hidden) hideZoomPop();
     else if (k === 'escape' && menu) closeMenu();
     else if (k === 'escape' && !panel.hidden) toggleSettings(false);
+    else if (k === 'f11') post({ type: 'fullScreen' });
+    else if (k === 'escape' && fullScreen && !fromDoc) post({ type: 'fullScreen', value: false }); // documents decide for themselves (find bar first)
     else if (ctrl && k === 'tab') cycle(e.shiftKey ? -1 : 1);
     else if (ctrl && e.shiftKey && k === 't') post({ type: 'reopenClosed' });
     else if (ctrl && !e.shiftKey && k === 'n') post({ type: 'new' });
@@ -224,10 +234,15 @@
     else if (ctrl && !e.shiftKey && k === 'o') post({ type: 'open' });
     else if (ctrl && k === 'w') active !== null ? requestClose(active) : post({ type: 'closeWindow' });
     else if (!fromDoc && ctrl && (k === 'f4')) active !== null && requestClose(active);
+    // Focus is in the tab bar: document shortcuts (Ctrl+S, Ctrl+1/2/3, Ctrl+F…) still go to the active document.
+    else if (!fromDoc && !e.target.closest?.('input, textarea, select') && forwardToDoc(e)) { /* handled there */ }
     else return false;
     e.preventDefault();
     e.stopPropagation();
     return true;
+  }
+  function forwardToDoc(e) {
+    try { return active !== null && !!tabs.get(active)?.frame.contentWindow.__key?.(e); } catch { return false; }
   }
   addEventListener('keydown', e => handleKey(e, false), true);
 
@@ -462,8 +477,38 @@
   addEventListener('blur', hideZoomPop); // clicked into a document
   addEventListener('resize', () => { if (!zoomPop.hidden) placeZoomPop(); });
 
+  // ---------- full screen (F11) ----------
+  // The app makes the window cover the screen; here the tab bar goes, and every document
+  // hides its toolbar and status bar (body.focus). Moving the mouse to the top edge shows
+  // an exit button for a moment.
+  let fullScreen = false, peekTimer = 0;
+  const setDocFocus = frame => { try { frame.contentDocument.body?.classList.toggle('focus', fullScreen); } catch {} };
+  function setFullScreen(on) {
+    fullScreen = on;
+    document.body.classList.toggle('focus', on);
+    tabs.forEach(t => setDocFocus(t.frame));
+    closeMenu();
+    hideZoomPop();
+    if (!panel.hidden) toggleSettings(false);
+    $('fs-exit').hidden = true;
+    if (on) toast('Full screen: press F11 or Esc to exit');
+  }
+  function peek(y) {
+    if (!fullScreen) return;
+    clearTimeout(peekTimer);
+    $('fs-exit').hidden = y > 48;
+    if (y <= 48) peekTimer = setTimeout(() => { if (!$('fs-exit').matches(':hover')) $('fs-exit').hidden = true; }, 2500);
+  }
+  addEventListener('mousemove', e => peek(e.clientY));
+  $('fs-exit').addEventListener('click', () => post({ type: 'fullScreen', value: false }));
+  $('fs-exit').addEventListener('mouseleave', () => peek(0));
+
   window.shell = {
     setZoom,
+    setFullScreen,
+    isFullScreen: () => fullScreen,
+    exitFullScreen: () => post({ type: 'fullScreen', value: false }),
+    peek,
     addTab,
     removeTab,
     activate: activateTab,

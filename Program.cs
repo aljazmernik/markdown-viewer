@@ -9,7 +9,11 @@ static class Program
 {
     // One window per user: launching again (e.g. double-clicking another .md file)
     // hands the paths to the running instance, which opens them as tabs.
-    static readonly string InstanceName = $"MarkdownViewer.{Environment.UserName}";
+    // A test copy with its own data folder (MARKDOWNVIEWER_DATA_DIR) is a separate instance.
+    static readonly string InstanceName = $"MarkdownViewer.{Environment.UserName}" +
+        (Environment.GetEnvironmentVariable("MARKDOWNVIEWER_DATA_DIR") is { Length: > 0 } dir
+            ? "." + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(dir.ToLowerInvariant())))[..16]
+            : "");
 
     [STAThread]
     static void Main(string[] args)

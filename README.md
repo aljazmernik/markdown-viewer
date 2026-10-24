@@ -20,15 +20,18 @@ Each file has a `.sha256` checksum next to it on the release page.
 ## Features
 
 **Viewing**
-- GitHub-style rendering: tables, task lists, footnotes, emoji, and syntax-highlighted code
+- GitHub-style rendering: tables, task lists, footnotes, emoji, syntax-highlighted code, and alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`)
+- YAML front matter (the `---` block at the top used by Obsidian, Jekyll, Hugo…) is shown as a small properties table
 - Mermaid diagrams and KaTeX math
 - Works fully offline, with every library bundled inside the exe
 - Live reload: the preview updates when the file changes on disk and keeps your scroll position
-- Relative images and links work; links to other `.md` files open in a new tab
+- Relative images and links work; links to other `.md` files open in a new tab, web links in your browser
 
 **Editing**
 - **Markdown** mode: source editor with a side-by-side preview. It keeps your exact text.
-- **Visual** mode: WYSIWYG editing, like a word processor
+- **Visual** mode: WYSIWYG editing, like a word processor. Math (`$…$`, `$$…$$`) shows as code there, so it's saved exactly as written.
+- Find and replace (Ctrl+F / Ctrl+H) with match case, whole word and regular expressions (`$1` in the replacement); Replace all is one undo step
+- Paste a screenshot or drop an image file into the editor: it's saved in an `images` folder next to the document and linked. Keep that folder with the document when you move it; *Save As* into another folder copies the images along. Images that can't be found are marked in the preview.
 - New file, Save, Save As; warns before closing unsaved work
 - If a file changes outside the app while you have unsaved edits, you can choose which version to keep
 
@@ -38,6 +41,7 @@ Each file has a `.sha256` checksum next to it on the release page.
 - Recent files, reopen a closed tab, and a right-click menu on tabs (copy path or file name, show in Explorer)
 - Outline sidebar that follows the section you're reading
 - Status bar with word count, reading time, cursor position and line endings
+- Full screen (F11) hides the tabs, toolbars and status bar for reading or writing without distractions
 - Zoom with Ctrl +/− or Ctrl+wheel. While zoomed, the tab bar shows the level (like *110%*). Click it for −, + and Reset, or press Ctrl+0.
 
 **Appearance** (palette button at the top right)
@@ -66,7 +70,9 @@ Each file has a `.sha256` checksum next to it on the release page.
 | Ctrl+Shift+T | Reopen closed tab |
 | Ctrl+P | Print |
 | F5 | Reload file from disk |
-| Ctrl+F | Find in page |
+| Ctrl+F | Find (in the editors: find bar; Enter / Shift+Enter or F3 for next / previous) |
+| Ctrl+H | Find and replace (Ctrl+Alt+Enter replaces all) |
+| F11 | Full screen: only the document (Esc or F11 to exit) |
 | Ctrl + / Ctrl − | Zoom |
 | Ctrl+0 | Reset zoom |
 
@@ -116,6 +122,12 @@ dotnet publish -c Release -o publish      # -> publish\MarkdownViewer.exe
 .\tools\test.ps1                          # run all tests
 ```
 
+To try a build next to an installed copy, give it its own settings folder; it then runs as a separate window instead of handing its files to the installed app:
+
+```powershell
+$env:MARKDOWNVIEWER_DATA_DIR = "$env:TEMP\mv-dev"; dotnet run
+```
+
 ### Tests
 
 - `tests/MarkdownViewer.Tests`: C# (xUnit): rendering, saving with CRLF/LF/BOM, update feed and checksum parsing, file association, themes and appearance settings
@@ -127,12 +139,12 @@ GitHub Actions runs both before every build; a failing test stops the release.
 
 Releases are built and published by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
 
-1. Set the new version in `MarkdownViewer.csproj` (`<Version>1.4.0</Version>`).
-2. Optionally write the release notes in `release-notes/v1.4.0.md`; otherwise GitHub generates them from the commits.
+1. Set the new version in `MarkdownViewer.csproj` (`<Version>1.5.0</Version>`).
+2. Optionally write the release notes in `release-notes/v1.5.0.md`; otherwise GitHub generates them from the commits.
 3. Commit, then push a tag:
    ```powershell
-   git tag v1.4.0
-   git push origin main v1.4.0
+   git tag v1.5.0
+   git push origin main v1.5.0
    ```
 
 The workflow builds the portable exe, the self-contained installer and their `.sha256` checksums, and publishes them as the GitHub Release for that tag. Pushes to `main` don't run it. To test a build without releasing, start the workflow by hand (*Actions → Release → Run workflow*); its files can be downloaded from the run's artifacts.

@@ -100,7 +100,27 @@ body.dirty #name::after { content: " \2022 edited"; color: var(--accent); }
 #bar button.icon { display: grid; place-items: center; width: 30px; height: 28px; padding: 0; color: var(--muted); }
 #bar button.icon.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
-#main { flex: 1; display: flex; min-height: 0; }
+#main { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* find & replace bar (editor modes) */
+#find { position: absolute; z-index: 20; right: 24px; display: flex; flex-direction: column; gap: 4px; padding: 6px;
+        border-radius: 8px; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 6px 20px rgba(0,0,0,.2); font-size: 13px; }
+#find .f-row { display: flex; align-items: center; gap: 3px; }
+#find input { width: 220px; height: 26px; box-sizing: border-box; padding: 0 8px; font: inherit; color: var(--fg); background: var(--bg);
+              border: 1px solid var(--border); border-radius: 5px; outline: none; }
+#find input:focus { border-color: var(--accent); }
+#find input.bad { border-color: var(--alert-caution); }
+#find .f-btn { min-width: 26px; height: 26px; padding: 0 5px; font: inherit; line-height: 1; color: var(--fg); background: transparent;
+               border: 1px solid transparent; border-radius: 5px; cursor: pointer; }
+#find .f-btn:hover:not(:disabled) { background: var(--bar); }
+#find .f-btn:disabled { opacity: .4; cursor: default; }
+#find .f-opt { font-size: 12px; color: var(--muted); }
+#find .f-opt.on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#find .f-text { padding: 0 9px; border-color: var(--border); }
+#find .f-spacer { width: 26px; flex: none; }
+#f-count { min-width: 72px; padding: 0 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+::highlight(find) { background-color: rgb(242 204 96 / .45); }
+::highlight(find-current) { background-color: rgb(255 150 50 / .85); color: #000; }
 /* position: relative keeps absolutely positioned content (e.g. KaTeX's hidden MathML) inside
    the scrolling area instead of stretching the whole page and adding a second scrollbar. */
 #preview { flex: 1; overflow: auto; position: relative; }
@@ -155,6 +175,38 @@ body.dirty #name::after { content: " \2022 edited"; color: var(--accent); }
 .markdown-body .mermaid { background: transparent; text-align: center; }
 .markdown-body .footnotes { font-size: .875em; color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; }
 
+/* an image that couldn't be loaded */
+.markdown-body img[data-broken] { display: none; }
+.markdown-body .img-missing { display: inline-block; max-width: 100%; box-sizing: border-box; padding: 6px 12px; font-size: .85em;
+                              color: var(--muted); border: 1px dashed var(--border); border-radius: 6px; word-break: break-all; }
+.markdown-body .img-missing::before { content: "\1F5BC\FE0E  "; }
+
+/* YAML front matter: a small properties table (or the raw YAML when it isn't simple) */
+.markdown-body .front-matter { margin: 0 0 24px; font-size: .85em; color: var(--muted); }
+.markdown-body div.front-matter table { display: table; width: 100%; border-collapse: collapse; border: 1px solid var(--border);
+                                        border-radius: 6px; background: var(--code-bg); }
+.markdown-body .front-matter tr { background: transparent !important; }
+.markdown-body .front-matter th, .markdown-body .front-matter td { border: 0; padding: 4px 12px; text-align: left; vertical-align: top; }
+.markdown-body .front-matter th { width: 1%; white-space: nowrap; font-weight: 600; }
+.markdown-body .front-matter td { color: var(--fg); }
+.markdown-body .front-matter tr + tr > * { border-top: 1px solid var(--border); }
+.markdown-body .fm-item { display: inline-block; margin: 1px 6px 1px 0; padding: 0 8px; border-radius: 10px;
+                          background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* GitHub alerts: > [!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION] */
+:root { --alert-note:#0969da; --alert-tip:#1a7f37; --alert-important:#8250df; --alert-warning:#9a6700; --alert-caution:#d1242f; }
+@media (prefers-color-scheme: dark) {
+  :root { --alert-note:#4493f8; --alert-tip:#3fb950; --alert-important:#ab7df8; --alert-warning:#d29922; --alert-caution:#f85149; }
+}
+.markdown-body .markdown-alert { --alert: var(--alert-note); margin: 0 0 16px; padding: 8px 16px; border-left: .25em solid var(--alert); }
+.markdown-body .markdown-alert > :last-child { margin-bottom: 0; }
+.markdown-body .markdown-alert-title { display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--alert); margin-bottom: 4px; }
+.markdown-body .markdown-alert-title svg { fill: currentColor; flex: none; }
+.markdown-body .markdown-alert-tip { --alert: var(--alert-tip); }
+.markdown-body .markdown-alert-important { --alert: var(--alert-important); }
+.markdown-body .markdown-alert-warning { --alert: var(--alert-warning); }
+.markdown-body .markdown-alert-caution { --alert: var(--alert-caution); }
+
 .welcome { text-align: center; padding-top: 18vh; color: var(--muted); }
 .welcome h1 { border: 0 !important; color: var(--fg); }
 .welcome button { font: inherit; padding: 8px 20px; border-radius: 6px; cursor: pointer;
@@ -184,6 +236,16 @@ body.dirty #name::after { content: " \2022 edited"; color: var(--accent); }
 
 /* ---------- Appearance panel ---------- */
 #appearance-btn.on { background: var(--bar); color: var(--accent); }
+
+/* full screen (F11): only the document; the mouse at the top edge shows #fs-exit */
+body.shell.focus #tabs, body.shell.focus #update { display: none; }
+body.focus #bar, body.focus #status, body.focus #outline,
+body.focus #editor .toastui-editor-toolbar { display: none !important; }
+body.focus .markdown-body { padding-top: 48px; }
+#fs-exit { position: fixed; z-index: 120; top: 10px; left: 50%; transform: translateX(-50%); padding: 6px 16px; font: inherit; font-size: 13px;
+           color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 18px; cursor: pointer;
+           box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+#fs-exit:hover { border-color: var(--accent); }
 
 /* zoom level in the tab bar and its − / + / Reset popup */
 #tabs #zoom { gap: 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
